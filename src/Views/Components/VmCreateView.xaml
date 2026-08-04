@@ -8,9 +8,6 @@
     xmlns:sys="clr-namespace:System;assembly=mscorlib">
 
     <UserControl.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
-        <converters:EqualityConverter x:Key="EqualityConverter" />
-        <converters:EqualityToVisibilityConverter x:Key="EqualityToVis" />
     </UserControl.Resources>
 
     <Grid Background="{ui:ThemeResource ApplicationBackgroundBrush}">
@@ -22,7 +19,7 @@
         </Grid.RowDefinitions>
 
         <!-- 内容区域 -->
-        <ScrollViewer Grid.Row="0" Padding="24,24,24,0" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="0" Padding="24,24,24,0" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
             <StackPanel>
 
                 <!-- 1. 标题栏 -->
@@ -47,11 +44,20 @@
                            Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
 
                 <ui:CardControl Header="{x:Static properties:Resources.Xaml_Name}" Icon="{ui:SymbolIcon Symbol=Edit24}" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
-                    <!-- 添加 Width="450" 以防止收缩，并保持与下方“配置文件位置”对齐 -->
-                    <ui:TextBox Text="{Binding NewVmName, UpdateSourceTrigger=PropertyChanged}" 
-                                PlaceholderText="{x:Static properties:Resources.Xaml_Placeholder_VmName}"
-                                Width="210"
-                                HorizontalAlignment="Right"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <ui:TextBox Text="{Binding NewVmName, UpdateSourceTrigger=PropertyChanged}"
+                                    PlaceholderText="{x:Static properties:Resources.Xaml_Placeholder_VmName}"
+                                    Width="210"/>
+                        <TextBlock Text="{x:Static properties:Resources.Xaml_Quantity}" VerticalAlignment="Center" Margin="16,0,8,0"
+                                   Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                        <ComboBox IsEditable="True" Text="{Binding NewVmQuantity, UpdateSourceTrigger=PropertyChanged}" Width="72">
+                            <sys:String>1</sys:String>
+                            <sys:String>2</sys:String>
+                            <sys:String>4</sys:String>
+                            <sys:String>8</sys:String>
+                            <sys:String>16</sys:String>
+                        </ComboBox>
+                    </StackPanel>
                 </ui:CardControl>
 
                 <ui:CardControl Header="{x:Static properties:Resources.Xaml_ConfigLoc}" Icon="{ui:SymbolIcon Symbol=FolderOpen24}" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
@@ -74,7 +80,7 @@
                         <ui:FontIcon Glyph="&#xE8C8;" FontSize="20" FontFamily="{DynamicResource SegoeFluentIcons}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     </ui:CardControl.Icon>
                     <StackPanel Orientation="Horizontal">
-                        <RadioButton Content="{x:Static properties:Resources.Xaml_Gen1}" IsChecked="{Binding NewVmGeneration, Converter={StaticResource EqualityConverter}, ConverterParameter=1}" Margin="0,0,24,0"/>
+                        <RadioButton Content="{x:Static properties:Resources.Xaml_Gen1}" IsEnabled="{Binding CanUseGen1}" IsChecked="{Binding NewVmGeneration, Converter={StaticResource EqualityConverter}, ConverterParameter=1}" Margin="0,0,24,0"/>
                         <RadioButton Content="{x:Static properties:Resources.Xaml_Gen2}" IsChecked="{Binding NewVmGeneration, Converter={StaticResource EqualityConverter}, ConverterParameter=2}"/>
                     </StackPanel>
                 </ui:CardControl>
@@ -96,7 +102,7 @@
                         </ui:FontIcon>
                     </ui:CardControl.Icon>
                     <StackPanel Orientation="Horizontal">
-                        <!-- 核心修改：ItemsSource 绑定到 PossibleVCpuCounts -->
+                        <!-- ItemsSource 绑定到 PossibleVCpuCounts -->
                         <ComboBox IsEditable="True" 
                                   ItemsSource="{Binding PossibleVCpuCounts}"
                                   Text="{Binding NewVmProcessorCount, UpdateSourceTrigger=PropertyChanged}" 
@@ -169,13 +175,13 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                                 <RadioButton Content="{x:Static properties:Resources.Xaml_NewDisk}" IsChecked="{Binding NewVmDiskMode, Converter={StaticResource EqualityConverter}, ConverterParameter=0}" Margin="0,0,16,0"/>
-                                <RadioButton Content="{x:Static properties:Resources.Xaml_ExistDisk}" IsChecked="{Binding NewVmDiskMode, Converter={StaticResource EqualityConverter}, ConverterParameter=1}" Margin="0,0,16,0"/>
+                                <RadioButton Content="{x:Static properties:Resources.Xaml_ExistDisk}" IsChecked="{Binding NewVmDiskMode, Converter={StaticResource EqualityConverter}, ConverterParameter=1}" IsEnabled="{Binding IsSingleCreate}" Margin="0,0,16,0"/>
                                 <RadioButton Content="{x:Static properties:Resources.Xaml_AttachLater}" IsChecked="{Binding NewVmDiskMode, Converter={StaticResource EqualityConverter}, ConverterParameter=2}"/>
                             </StackPanel>
                         </Grid>
 
                         <!-- 模式0：新建磁盘 (容量与路径同行) -->
-                        <Grid Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVis}, ConverterParameter=0}" Margin="0,10,0,0">
+                        <Grid Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=0}" Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="160"/>
                                 <ColumnDefinition Width="24"/>
@@ -208,7 +214,7 @@
                         </Grid>
 
                         <!-- 模式1：现有磁盘 -->
-                        <StackPanel Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVis}, ConverterParameter=1}" Margin="0,10,0,0">
+                        <StackPanel Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=1}" Margin="0,10,0,0">
                             <TextBlock Text="{x:Static properties:Resources.Xaml_ExistDiskPath}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,8"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -222,7 +228,7 @@
 
                         <!-- 模式2：稍后附加 -->
                         <TextBlock Text="{x:Static properties:Resources.Xaml_CreateWithoutDisk}" 
-                                   Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVis}, ConverterParameter=2}"
+                                   Visibility="{Binding NewVmDiskMode, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=2}"
                                    Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" FontSize="13" Margin="0,10,0,0"/>
                     </StackPanel>
                 </Border>

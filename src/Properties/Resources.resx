@@ -150,6 +150,9 @@
   <data name="Host" xml:space="preserve">
     <value>Host</value>
   </data>
+  <data name="Host_Physical" xml:space="preserve">
+    <value>Host (physical)</value>
+  </data>
   <data name="PCIeService_SetShutdownToTurnOff" xml:space="preserve">
     <value>Change VM shutdown action to Hard Turn Off...</value>
   </data>
@@ -198,11 +201,20 @@
   <data name="Theme_Switch" xml:space="preserve">
     <value>Switch between light/dark mode</value>
   </data>
+  <data name="Settings_PerformanceTitle" xml:space="preserve">
+    <value>Lightweight</value>
+  </data>
+  <data name="Settings_PerformanceDesc" xml:space="preserve">
+    <value>Disable animations and reduce memory usage</value>
+  </data>
   <data name="Theme_Light" xml:space="preserve">
     <value>Light</value>
   </data>
   <data name="Theme_Dark" xml:space="preserve">
     <value>Dark</value>
+  </data>
+  <data name="Theme_System" xml:space="preserve">
+    <value>Follow System</value>
   </data>
   <data name="Lang_Title" xml:space="preserve">
     <value>Language</value>
@@ -275,6 +287,9 @@
   </data>
   <data name="Error_NvidiaRegistryProcessingException" xml:space="preserve">
     <value>Error: An exception occurred while processing the NVIDIA registry: {0}</value>
+  </data>
+  <data name="Error_NvidiaRegistryImportFailed" xml:space="preserve">
+    <value>Error: Failed to import the NVIDIA registry information (exit code {0}).</value>
   </data>
   <data name="Error_CannotGetVmInfo" xml:space="preserve">
     <value>Failed to get virtual machine information.</value>
@@ -360,6 +375,44 @@ Do you want to shut down the virtual machine and expand its MMIO space to 64GB?<
   </data>
   <data name="Error_Unknown" xml:space="preserve">
     <value>Unknown error</value>
+  </data>
+  <data name="Error_DeviceNotAssignable" xml:space="preserve">
+    <value>This device does not support passthrough assignment.</value>
+  </data>
+  <data name="PCIePage_Title_LastGpuWarning" xml:space="preserve">
+    <value>Warning: Host May Lose Video Output!</value>
+  </data>
+  <data name="PCIePage_Msg_StorageHasSystemDisk" xml:space="preserve">
+    <value>This storage controller hosts the system or boot disk:
+
+{0}
+
+It cannot be passed through (doing so would make the host unbootable).</value>
+  </data>
+  <data name="PCIePage_Title_StorageOffline" xml:space="preserve">
+    <value>Take Disks Offline</value>
+  </data>
+  <data name="PCIePage_Msg_StorageOffline" xml:space="preserve">
+    <value>This storage controller hosts the following online disks:
+
+{0}
+
+They must be taken offline before passthrough (the host will lose access to them). Continue?</value>
+  </data>
+  <data name="PCIePage_Msg_LastGpuWarning" xml:space="preserve">
+    <value>{0} is the only graphics card on the host.
+After passthrough the host will lose video output and the physical display may go black.
+Continue?</value>
+  </data>
+  <data name="PCIePage_Title_CompanionDevice" xml:space="preserve">
+    <value>Confirm Companion Devices</value>
+  </data>
+  <data name="PCIePage_Msg_CompanionDevice" xml:space="preserve">
+    <value>{0} also has the following associated devices:
+
+{1}
+
+Connect them to "{2}" as well?</value>
   </data>
   <data name="PCIePage_Error_ExecutionGeneric" xml:space="preserve">
     <value>An error occurred during execution:
@@ -545,10 +598,19 @@ The existing NAT switch is: '{0}'</value>
     <value>Improves compatibility with older OS.</value>
   </data>
   <data name="VirtualMachineSmt" xml:space="preserve">
-    <value>Virtual Machine SMT</value>
+    <value>Virtual Machine Hyper-Threading</value>
   </data>
   <data name="VirtualMachineSmtDescription" xml:space="preserve">
-    <value>Enables Hyper-Threading.</value>
+    <value>Controls the number of hardware threads per core exposed to the virtual machine.</value>
+  </data>
+  <data name="CpuEnum_Smt_Inherit" xml:space="preserve">
+    <value>Inherit from host</value>
+  </data>
+  <data name="CpuEnum_Smt_SingleThread" xml:space="preserve">
+    <value>Single thread</value>
+  </data>
+  <data name="CpuEnum_Smt_MultiThread" xml:space="preserve">
+    <value>Multi-threading</value>
   </data>
   <data name="CpuBinding" xml:space="preserve">
     <value>Cpu Pinning</value>
@@ -582,6 +644,9 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="AddDisk_NoAvailablePhysical" xml:space="preserve">
     <value>No available physical devices</value>
+  </data>
+  <data name="AddDisk_NoAvailableOptical" xml:space="preserve">
+    <value>No physical optical drive available</value>
   </data>
   <data name="AddDisk_Number" xml:space="preserve">
     <value>Number</value>
@@ -661,6 +726,24 @@ The existing NAT switch is: '{0}'</value>
   <data name="Storage_Slot" xml:space="preserve">
     <value>Slot</value>
   </data>
+  <data name="Storage_PassthroughStale" xml:space="preserve">
+    <value>Disk is online — pass-through is broken. Set the disk offline to restore, or delete this entry to remove it.</value>
+  </data>
+  <data name="Storage_DiskStatus_Available" xml:space="preserve">
+    <value>Available</value>
+  </data>
+  <data name="Storage_DiskStatus_System" xml:space="preserve">
+    <value>System / boot disk</value>
+  </data>
+  <data name="Storage_DiskStatus_Assigned" xml:space="preserve">
+    <value>Assigned to {0}</value>
+  </data>
+  <data name="Storage_DiskStatus_ReadOnly" xml:space="preserve">
+    <value>Read-only</value>
+  </data>
+  <data name="Storage_DiskStatus_Usb" xml:space="preserve">
+    <value>USB (pass-through not supported)</value>
+  </data>
   <data name="Model_Drive_OpticalDrive" xml:space="preserve">
     <value>Optical Drive</value>
   </data>
@@ -687,9 +770,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Global_Restart" xml:space="preserve">
     <value>Restart Now</value>
-  </data>
-  <data name="Status_Title_Error" xml:space="preserve">
-    <value>Error</value>
   </data>
   <data name="Status_Title_Info" xml:space="preserve">
     <value>Information</value>
@@ -847,9 +927,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Error_Cpu_ConfigNotFound" xml:space="preserve">
     <value>VM or Processor config not found.</value>
   </data>
-  <data name="Common_Success" xml:space="preserve">
-    <value>Success</value>
-  </data>
   <data name="Scheduler_Classic" xml:space="preserve">
     <value>Classic</value>
   </data>
@@ -870,6 +947,9 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Msg_Host_SchedulerChanged" xml:space="preserve">
     <value>Scheduler type changed. Reboot required.</value>
+  </data>
+  <data name="Msg_Host_NativeNvmeChanged" xml:space="preserve">
+    <value>NVMe driver setting changed. Reboot required.</value>
   </data>
   <data name="Error_Host_SchedulerFail" xml:space="preserve">
     <value>Failed to set scheduler type.</value>
@@ -895,14 +975,8 @@ The existing NAT switch is: '{0}'</value>
   <data name="Error_Common_ApplyFail" xml:space="preserve">
     <value>Apply Failed</value>
   </data>
-  <data name="Error_Common_SysException" xml:space="preserve">
-    <value>System Exception</value>
-  </data>
   <data name="Error_Cpu_AffinityFail" xml:space="preserve">
     <value>Failed to load affinity.</value>
-  </data>
-  <data name="Msg_Common_SaveSuccess" xml:space="preserve">
-    <value>Saved successfully</value>
   </data>
   <data name="Msg_Cpu_AffinityApplied" xml:space="preserve">
     <value>CPU affinity applied.</value>
@@ -919,12 +993,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Error_Cpu_ApplyFail" xml:space="preserve">
     <value>Cannot apply settings. Check HCS permissions.</value>
   </data>
-  <data name="Common_Error" xml:space="preserve">
-    <value>Error</value>
-  </data>
-  <data name="Common_ExceptionLabel" xml:space="preserve">
-    <value>Exception</value>
-  </data>
   <data name="Error_Storage_LoadFail" xml:space="preserve">
     <value>Failed to load storage</value>
   </data>
@@ -936,9 +1004,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Error_Storage_RemoveFail" xml:space="preserve">
     <value>Remove failed</value>
-  </data>
-  <data name="Common_Restricted" xml:space="preserve">
-    <value>Operation Restricted</value>
   </data>
   <data name="Error_Storage_PhysicalMod" xml:space="preserve">
     <value>Passthrough disks cannot be modified. Remove and re-add.</value>
@@ -958,9 +1023,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Title_SelectVhd" xml:space="preserve">
     <value>Select Virtual Disk File</value>
   </data>
-  <data name="Msg_Common_ModSuccess" xml:space="preserve">
-    <value>Modified Successfully</value>
-  </data>
   <data name="Msg_Storage_PathUpdated" xml:space="preserve">
     <value>Storage path updated</value>
   </data>
@@ -976,17 +1038,20 @@ The existing NAT switch is: '{0}'</value>
   <data name="Button_Browse" xml:space="preserve">
     <value>Browse...</value>
   </data>
-  <data name="Error_Storage_Collision" xml:space="preserve">
-    <value>Slot Collision</value>
-  </data>
   <data name="Error_Storage_Occupied" xml:space="preserve">
     <value>Slot is occupied. Select another one.</value>
   </data>
-  <data name="Error_Common_Args" xml:space="preserve">
-    <value>Missing Arguments</value>
-  </data>
   <data name="Error_Storage_SelectTarget" xml:space="preserve">
     <value>Please select a storage device/file.</value>
+  </data>
+  <data name="Error_Storage_FileNotExist" xml:space="preserve">
+    <value>Cannot find the file to attach. Please check the path.</value>
+  </data>
+  <data name="Error_Storage_FileExists" xml:space="preserve">
+    <value>Target file already exists. Use a different name or delete it first.</value>
+  </data>
+  <data name="Error_Storage_ParentRequired" xml:space="preserve">
+    <value>A differencing disk requires an existing parent disk file.</value>
   </data>
   <data name="Error_Storage_IsoSource" xml:space="preserve">
     <value>Source folder required for ISO creation.</value>
@@ -1024,14 +1089,14 @@ The existing NAT switch is: '{0}'</value>
   <data name="Filter_IsoExt" xml:space="preserve">
     <value>ISO Image (*.iso)|*.iso</value>
   </data>
-  <data name="Msg_Common_AddSuccess" xml:space="preserve">
-    <value>Added Successfully</value>
-  </data>
   <data name="Msg_Storage_Connected" xml:space="preserve">
     <value>Device connected to {0} {1}:{2}</value>
   </data>
   <data name="Error_Storage_AddFail" xml:space="preserve">
     <value>Add Failed</value>
+  </data>
+  <data name="Error_Storage_OfflineFail" xml:space="preserve">
+    <value>Failed to take the disk offline — it may be in use (mounted volumes). Take it offline in Disk Management first, or choose another disk.</value>
   </data>
   <data name="Error_Storage_Gen1Dvd" xml:space="preserve">
     <value>Gen1 VM DVD cannot be added while running (IDE no hot-swap).</value>
@@ -1050,6 +1115,57 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Error_Storage_CtrlFull" xml:space="preserve">
     <value>Controller {0} #{1} is full.</value>
+  </data>
+  <data name="Error_Storage_ControllerNotFound" xml:space="preserve">
+    <value>Target storage controller not found.</value>
+  </data>
+  <data name="Error_Storage_DvdNotFound" xml:space="preserve">
+    <value>Target DVD drive not found.</value>
+  </data>
+  <data name="Error_Storage_DiskNotFound" xml:space="preserve">
+    <value>Target disk not found.</value>
+  </data>
+  <data name="Error_Storage_IdeHotAdd" xml:space="preserve">
+    <value>IDE devices cannot be added while the VM is running. Please shut down the VM first.</value>
+  </data>
+  <data name="Error_Storage_DvdHotRemove" xml:space="preserve">
+    <value>Cannot remove an IDE DVD drive while the VM is running. Please shut down the VM first.</value>
+  </data>
+  <data name="Error_Storage_IdeHotRemove" xml:space="preserve">
+    <value>Cannot remove an IDE hard disk while the VM is running. Please shut down the VM first.</value>
+  </data>
+  <data name="Error_Storage_ScsiHotAdd" xml:space="preserve">
+    <value>Cannot add a new SCSI controller while the VM is running. Please shut down the VM first.</value>
+  </data>
+  <data name="Error_Storage_Unknown" xml:space="preserve">
+    <value>An unknown storage error occurred.</value>
+  </data>
+  <data name="Error_Storage_IsoBuildFail" xml:space="preserve">
+    <value>Failed to create ISO image: {0}</value>
+  </data>
+  <data name="VmPage_StartFail" xml:space="preserve">
+    <value>Failed to start</value>
+  </data>
+  <data name="Error_Vm_NotFound" xml:space="preserve">
+    <value>VM '{0}' not found.</value>
+  </data>
+  <data name="Error_Vm_NameEmpty" xml:space="preserve">
+    <value>VM name is empty.</value>
+  </data>
+  <data name="Error_Vm_GetSettings" xml:space="preserve">
+    <value>Cannot get VM settings.</value>
+  </data>
+  <data name="Error_Vm_EnumResources" xml:space="preserve">
+    <value>Cannot enumerate VM resources.</value>
+  </data>
+  <data name="Error_Storage_PhysDiskNotFound" xml:space="preserve">
+    <value>Physical disk {0} not found in Hyper-V.</value>
+  </data>
+  <data name="Error_Storage_ResNotFound" xml:space="preserve">
+    <value>Target storage resource not found.</value>
+  </data>
+  <data name="Error_Video_NoController" xml:space="preserve">
+    <value>Synthetic display controller not found.</value>
   </data>
   <data name="Net_Mode_Access" xml:space="preserve">
     <value>Access</value>
@@ -1084,9 +1200,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Error_Net_AddExc" xml:space="preserve">
     <value>Add Exception</value>
   </data>
-  <data name="Msg_Net_Removed" xml:space="preserve">
-    <value>Removed Successfully</value>
-  </data>
   <data name="Msg_Net_AdapterRemoved" xml:space="preserve">
     <value>Network adapter removed.</value>
   </data>
@@ -1096,8 +1209,11 @@ The existing NAT switch is: '{0}'</value>
   <data name="Msg_Net_VlanApplied" xml:space="preserve">
     <value>VLAN settings applied</value>
   </data>
-  <data name="Common_Failed" xml:space="preserve">
-    <value>Failed</value>
+  <data name="Msg_Net_MacApplied" xml:space="preserve">
+    <value>MAC address applied</value>
+  </data>
+  <data name="Error_Net_MacInvalid" xml:space="preserve">
+    <value>Invalid MAC address (12 hex digits required).</value>
   </data>
   <data name="Msg_Net_QosApplied" xml:space="preserve">
     <value>QoS settings applied</value>
@@ -1128,9 +1244,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Error_Gpu_RemoveFail" xml:space="preserve">
     <value>Failed to remove GPU partition. Check permissions.</value>
-  </data>
-  <data name="Error_Common_OpException" xml:space="preserve">
-    <value>Operation Exception</value>
   </data>
   <data name="Msg_Gpu_WorkStart" xml:space="preserve">
     <value>&gt;&gt;&gt; Configuring GPU for VM [{0}]</value>
@@ -1192,6 +1305,9 @@ The existing NAT switch is: '{0}'</value>
   <data name="Msg_Gpu_AssignOk" xml:space="preserve">
     <value>GPU partition created.</value>
   </data>
+  <data name="Warn_Gpu_RollbackAdapterNotIdentified" xml:space="preserve">
+    <value>[Warning] The GPU partition created by this operation could not be identified. If a later step fails, automatic rollback will be skipped.</value>
+  </data>
   <data name="Msg_Gpu_Scanning" xml:space="preserve">
     <value>Scanning all mounted disk partitions...</value>
   </data>
@@ -1249,9 +1365,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Warn_Gpu_EnvExc" xml:space="preserve">
     <value>[Warning] Env exception: {0}</value>
   </data>
-  <data name="Error_Common_Verify" xml:space="preserve">
-    <value>Verification Failed</value>
-  </data>
   <data name="Msg_Gpu_DeployStart" xml:space="preserve">
     <value>&gt;&gt;&gt; Starting Linux deployment</value>
   </data>
@@ -1270,9 +1383,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Msg_Gpu_SelectPart" xml:space="preserve">
     <value>Select target partition...</value>
   </data>
-  <data name="Msg_Common_ConfigSuccess" xml:space="preserve">
-    <value>Configuration Successful</value>
-  </data>
   <data name="Msg_Gpu_Ready" xml:space="preserve">
     <value>{0} is ready.</value>
   </data>
@@ -1284,9 +1394,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Status_Processing" xml:space="preserve">
     <value>Processing</value>
-  </data>
-  <data name="Msg_Common_CopyOk" xml:space="preserve">
-    <value>Copied Successfully</value>
   </data>
   <data name="Msg_Gpu_LogCopy" xml:space="preserve">
     <value>Log copied to clipboard</value>
@@ -1315,11 +1422,29 @@ The existing NAT switch is: '{0}'</value>
   <data name="Menu_Runtime" xml:space="preserve">
     <value>Runtime Environment</value>
   </data>
+  <data name="Label_ReqGeneral" xml:space="preserve">
+    <value>General requirements</value>
+  </data>
+  <data name="Label_ReqGpuPv" xml:space="preserve">
+    <value>GPU-PV requirements</value>
+  </data>
+  <data name="Label_ReqPcie" xml:space="preserve">
+    <value>PCIe passthrough requirements</value>
+  </data>
+  <data name="Label_ReqUsb" xml:space="preserve">
+    <value>USB passthrough requirements</value>
+  </data>
+  <data name="Label_UsbipdInstalled" xml:space="preserve">
+    <value>usbipd-win installed</value>
+  </data>
   <data name="Menu_CpuVirt" xml:space="preserve">
     <value>CPU Virtualization</value>
   </data>
   <data name="Menu_Iommu" xml:space="preserve">
     <value>IOMMU Status</value>
+  </data>
+  <data name="Menu_Iommu_Smmu" xml:space="preserve">
+    <value>SMMU Status</value>
   </data>
   <data name="Menu_HyperVService" xml:space="preserve">
     <value>Hyper-V Service</value>
@@ -1351,11 +1476,26 @@ The existing NAT switch is: '{0}'</value>
   <data name="Desc_UnlockHard" xml:space="preserve">
     <value>Fix issues caused by hardware security checks</value>
   </data>
+  <data name="Menu_NativeNvme" xml:space="preserve">
+    <value>Enable NVMe Driver</value>
+  </data>
+  <data name="Desc_NativeNvme" xml:space="preserve">
+    <value>Use the native multi-queue NVMe driver instead of SCSI</value>
+  </data>
   <data name="Menu_SwitchServer" xml:space="preserve">
     <value>Switch to Server Edition</value>
   </data>
   <data name="Desc_SwitchServer" xml:space="preserve">
     <value>Magic Tweak (Not available for Pro/Home/Ent editions)</value>
+  </data>
+  <data name="SwitchServer_ConfirmTitle" xml:space="preserve">
+    <value>Switch to Server Edition?</value>
+  </data>
+  <data name="SwitchServer_ConfirmMsg" xml:space="preserve">
+    <value>After switching to Server edition, some drivers and applications may not work correctly, and in extreme cases the system may fail to start normally; by continuing, you accept the associated risks. Continue?</value>
+  </data>
+  <data name="SwitchServer_ConfirmBtn" xml:space="preserve">
+    <value>Confirm</value>
   </data>
   <data name="Menu_VMManagement" xml:space="preserve">
     <value>VM Management</value>
@@ -1484,16 +1624,16 @@ The existing NAT switch is: '{0}'</value>
     <value>Hides virtualization flags, helps bypass detection.</value>
   </data>
   <data name="Menu_ExposePmu" xml:space="preserve">
-    <value>Expose PMU</value>
+    <value>Expose Architectural Performance Monitoring Unit (Arch PMU)</value>
   </data>
   <data name="Desc_ExposePmu" xml:space="preserve">
-    <value>Passthrough hardware counters to guest.</value>
+    <value>Allows the VM to access architectural performance monitoring counters</value>
   </data>
   <data name="Menu_ExposeMsr" xml:space="preserve">
-    <value>Expose MSR</value>
+    <value>Expose Frequency Monitoring Registers (ACOUNT/MCOUNT)</value>
   </data>
   <data name="Desc_ExposeMsr" xml:space="preserve">
-    <value>Allows guest to read true CPU frequency.</value>
+    <value>Allows the VM to read the ACOUNT/MCOUNT frequency monitoring registers</value>
   </data>
   <data name="Menu_DisableSpectre" xml:space="preserve">
     <value>Disable Spectre Mitigations</value>
@@ -1584,6 +1724,15 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Button_Uninstall" xml:space="preserve">
     <value>Uninstall</value>
+  </data>
+  <data name="Error_Storage_DiskChanged" xml:space="preserve">
+    <value>The selected disk has changed. Refresh the list and select it again.</value>
+  </data>
+  <data name="Error_Storage_DiskAlreadyAssigned" xml:space="preserve">
+    <value>This physical disk is already assigned to a virtual machine.</value>
+  </data>
+  <data name="Button_UpdateDriver" xml:space="preserve">
+    <value>Update Driver</value>
   </data>
   <data name="Label_Manu" xml:space="preserve">
     <value>Manufacturer</value>
@@ -1792,9 +1941,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="VmPage_RenameFail" xml:space="preserve">
     <value>Rename failed</value>
   </data>
-  <data name="VmPage_SysExp" xml:space="preserve">
-    <value>System exception</value>
-  </data>
   <data name="VmPage_Default" xml:space="preserve">
     <value>Default</value>
   </data>
@@ -1837,8 +1983,17 @@ The existing NAT switch is: '{0}'</value>
   <data name="VmPage_IsoNotFound" xml:space="preserve">
     <value>The specified ISO image file does not exist</value>
   </data>
-  <data name="VmPage_CreateSuccess" xml:space="preserve">
-    <value>Creation Successful</value>
+  <data name="VmPage_InvalidCpuCount" xml:space="preserve">
+    <value>Processor count must be an integer greater than 0</value>
+  </data>
+  <data name="VmPage_InvalidMemory" xml:space="preserve">
+    <value>Startup memory must be an integer no less than 32 (MB)</value>
+  </data>
+  <data name="VmPage_InvalidDiskSize" xml:space="preserve">
+    <value>Disk capacity must be an integer greater than 0 (GB)</value>
+  </data>
+  <data name="VmPage_CreateOptionsLoadFail" xml:space="preserve">
+    <value>Failed to load creation options; some defaults may be inaccurate</value>
   </data>
   <data name="VmPage_VmCreated" xml:space="preserve">
     <value>Virtual machine {0} has been successfully created and configured.</value>
@@ -1970,7 +2125,7 @@ The existing NAT switch is: '{0}'</value>
     <value>Checking VM configuration...</value>
   </data>
   <data name="Msg_Gpu_ConfigNeeded" xml:space="preserve">
-    <value>Pending configure.</value>
+    <value>Settings configured.</value>
   </data>
   <data name="Msg_Gpu_ConfigOk" xml:space="preserve">
     <value>VM config is OK.</value>
@@ -1999,9 +2154,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="HyperVScheduler_LogEventLogQueryFail" xml:space="preserve">
     <value>[HyperVSchedulerService] Failed to query event log: {0}</value>
   </data>
-  <data name="HyperVScheduler_LogBcdeditFail" xml:space="preserve">
-    <value>[HyperVSchedulerService] Failed to execute bcdedit via Utils.RunScriptSTA: {0}</value>
-  </data>
   <data name="UsbVmbus_LogStoppingTunnel" xml:space="preserve">
     <value>[StopTunnel] Stopping old tunnel: {0}</value>
   </data>
@@ -2010,9 +2162,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="UsbVmbus_LogTunnelFailed" xml:space="preserve">
     <value>[AutoRecover] Tunnel establishment failed: {0}</value>
-  </data>
-  <data name="VmGPUService_LogLocal" xml:space="preserve">
-    <value>[Local] {0}</value>
   </data>
   <data name="VmGPUService_LogOnline" xml:space="preserve">
     <value>[Online] {0}</value>
@@ -2080,12 +2229,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="USBPageViewModel_OpenWebpageFailed" xml:space="preserve">
     <value>Unable to open webpage: {0}</value>
   </data>
-  <data name="VmPage_MsgCreatingVm" xml:space="preserve">
-    <value>Cancel</value>
-  </data>
-  <data name="VmPage_ErrOpenFailed" xml:space="preserve">
-    <value>[CONSOLE] Opening immersive console for {0}...</value>
-  </data>
   <data name="VmPage_ErrConfigDirNotFound" xml:space="preserve">
     <value>Cannot start console: {0}</value>
   </data>
@@ -2098,52 +2241,22 @@ The existing NAT switch is: '{0}'</value>
   <data name="VmPage_AffinityApplyException" xml:space="preserve">
     <value>[Affinity] Auto-apply exception: {0}</value>
   </data>
-  <data name="VmPage_BtnPermanentDelete" xml:space="preserve">
-    <value>[DEBUG-STORAGE] [Trigger] Type manual change -&gt; {0}</value>
-  </data>
-  <data name="VmPage_BtnCancel" xml:space="preserve">
-    <value>[DEBUG-STORAGE] [Trigger] Number manual change -&gt; {0}</value>
-  </data>
-  <data name="VmPage_MsgDeleteComplete" xml:space="preserve">
-    <value>[DEBUG-STORAGE] [Notify] SelectedLocation current: {0}</value>
-  </data>
-  <data name="VmPage_ErrModifyFailed" xml:space="preserve">
-    <value>[DEBUG-STORAGE] Number refresh complete -&gt; {0}</value>
-  </data>
-  <data name="VmPage_MemMapPhysical" xml:space="preserve">
-    <value>[DEBUG-STORAGE] Location refresh complete -&gt; {0}</value>
-  </data>
-  <data name="VmPage_MemMapVirtual" xml:space="preserve">
-    <value>[DEBUG-STORAGE] &lt;&lt;&lt; Auto-allocation UI sync complete</value>
-  </data>
-  <data name="VmPage_MemMapHybrid" xml:space="preserve">
-    <value>[DEBUG-STORAGE] SetSlot exception: {0}</value>
-  </data>
-  <data name="VmPage_MemGranAutoAssign" xml:space="preserve">
-    <value>[DEBUG-STORAGE] Refreshing [Number] list, type: {0}</value>
-  </data>
-  <data name="VmPage_MemGranStandard" xml:space="preserve">
-    <value>[DEBUG-STORAGE] Refreshing [Location] list: {0}, #{1}</value>
-  </data>
-  <data name="VmPage_MemGranLargePage" xml:space="preserve">
-    <value>[DEBUG-STORAGE] Location reset after manual switch to: {0}</value>
-  </data>
-  <data name="VmPage_MemGranHugePage" xml:space="preserve">
+  <data name="VmPage_GpuCheckDeploy" xml:space="preserve">
     <value>Please check deployment scheme and Host IP</value>
   </data>
-  <data name="VmPage_MemGranAutoAssign2" xml:space="preserve">
+  <data name="VmPage_GpuUserRollback" xml:space="preserve">
     <value>[User Reset] Unfinished GPU partitioning detected, rolling back...</value>
   </data>
-  <data name="VmPage_MemGranStandard2" xml:space="preserve">
+  <data name="VmPage_GpuUserRollbackDone" xml:space="preserve">
     <value>[User Reset] Partition removed successfully.</value>
   </data>
-  <data name="VmPage_MemGranLargePage2" xml:space="preserve">
+  <data name="VmPage_GpuUserRollbackFail" xml:space="preserve">
     <value>[User Reset] Rollback failed: {0}</value>
   </data>
-  <data name="VmPage_MemGranHugePage2" xml:space="preserve">
+  <data name="VmPage_GpuResetDone" xml:space="preserve">
     <value>Process reset</value>
   </data>
-  <data name="VmPage_MemTrackDisable" xml:space="preserve">
+  <data name="VmPage_GpuResetDesc" xml:space="preserve">
     <value>You can re-select the GPU or modify parameters</value>
   </data>
   <data name="ConsoleWindow_StartVm" xml:space="preserve">
@@ -2169,6 +2282,12 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="ConsoleWindow_FullScreen" xml:space="preserve">
     <value>Full Screen (Ctrl+Alt+Space)</value>
+  </data>
+  <data name="ConsoleWindow_ZoomAuto" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="ConsoleWindow_ZoomHint" xml:space="preserve">
+    <value>Zoom stretches the image, so zooming in may look blurry (same as the native console). Auto follows the display scale.</value>
   </data>
   <data name="HostPage_Disable" xml:space="preserve">
     <value>Disable</value>
@@ -2377,110 +2496,86 @@ The existing NAT switch is: '{0}'</value>
   <data name="SystemType_ErrReplaceFailed" xml:space="preserve">
     <value>Replacement failed: {0}</value>
   </data>
-  <data name="VmPage_MemTrackEnable" xml:space="preserve">
+  <data name="SystemType_ErrWorkFileLocked" xml:space="preserve">
+    <value>The working file is in use: a switch awaiting restart may exist, or security software is holding it</value>
+  </data>
+  <data name="VmPage_CreatingVm" xml:space="preserve">
     <value>Creating virtual machine...</value>
   </data>
-  <data name="VmPage_MemTrackByProcessorNode" xml:space="preserve">
+  <data name="VmPage_StartingVm" xml:space="preserve">
     <value>Starting virtual machine...</value>
   </data>
-  <data name="VmPage_SgxAccessDenied" xml:space="preserve">
+  <data name="VmPage_OpenFail" xml:space="preserve">
     <value>Failed to open</value>
   </data>
-  <data name="VmPage_SgxReadOnly" xml:space="preserve">
+  <data name="VmPage_ConfigDirNotFound" xml:space="preserve">
     <value>VM configuration directory not found</value>
   </data>
-  <data name="VmPage_MsgOptimizeComplete" xml:space="preserve">
-    <value>Permanently Delete VM</value>
-  </data>
-  <data name="VmPage_MsgDiskReclaimOk" xml:space="preserve">
-    <value>About to permanently delete "{0}", including all virtual hard disk files and the configuration directory.\n\n⚠️ Please confirm there are no other files in the VM configuration directory. This action cannot be undone!</value>
-  </data>
-  <data name="VmPage_ErrOptimizeFailed" xml:space="preserve">
+  <data name="VmPage_PurgeTitle" xml:space="preserve">
     <value>Permanently Delete</value>
   </data>
-  <data name="VmPage_ErrSystemException" xml:space="preserve">
-    <value>Cancel</value>
+  <data name="VmPage_PurgeConfirm" xml:space="preserve">
+    <value>The following directories and files will be permanently deleted and cannot be recovered:</value>
   </data>
-  <data name="VmPage_LogStorageAddAction" xml:space="preserve">
-    <value>Deletion complete</value>
+  <data name="VmPage_PurgeBtn" xml:space="preserve">
+    <value>Permanently Delete</value>
   </data>
-  <data name="VmPage_LogStorageAutoAssign" xml:space="preserve">
+  <data name="VmPage_PurgeDoneDesc" xml:space="preserve">
     <value>"{0}" has been permanently removed</value>
   </data>
-  <data name="VmPage_LogUiSaveTriggered" xml:space="preserve">
-    <value>Deletion failed</value>
-  </data>
-  <data name="VmPage_LogDiskSaveResult" xml:space="preserve">
+  <data name="VmPage_ModifyFail" xml:space="preserve">
     <value>Modification failed</value>
   </data>
-  <data name="VmPage_LogSaveError" xml:space="preserve">
+  <data name="VmPage_BackingTypePhysical" xml:space="preserve">
     <value>Physical Mapping Mode</value>
   </data>
-  <data name="VmPage_ErrOperationFailed" xml:space="preserve">
+  <data name="VmPage_BackingTypeVirtual" xml:space="preserve">
     <value>Virtual Mapping Mode</value>
   </data>
-  <data name="VmPage_ErrModifyFailed2" xml:space="preserve">
+  <data name="VmPage_BackingTypeHybrid" xml:space="preserve">
     <value>Hybrid Mapping Mode</value>
   </data>
-  <data name="VmPage_ErrRetrieveFailed" xml:space="preserve">
+  <data name="VmPage_MemGranularityAuto" xml:space="preserve">
     <value>System Auto-Assign</value>
   </data>
-  <data name="VmPage_MsgOperationOk" xml:space="preserve">
+  <data name="VmPage_MemGranularityStandard" xml:space="preserve">
     <value>Standard Granularity</value>
   </data>
-  <data name="VmPage_MsgSpacetimeCreated" xml:space="preserve">
+  <data name="VmPage_MemGranularityLarge" xml:space="preserve">
     <value>Large Page Granularity</value>
   </data>
-  <data name="VmPage_ErrOperationFailed2" xml:space="preserve">
+  <data name="VmPage_MemGranularityHuge" xml:space="preserve">
     <value>Huge Page Granularity</value>
   </data>
-  <data name="VmPage_MsgSpacetimeAnnihilated" xml:space="preserve">
+  <data name="VmPage_MemTrackingDisable" xml:space="preserve">
     <value>Disable Tracking</value>
   </data>
-  <data name="VmPage_MsgWormholeOpened" xml:space="preserve">
+  <data name="VmPage_MemTrackingEnable" xml:space="preserve">
     <value>Enable Tracking</value>
   </data>
-  <data name="VmPage_MsgConnectedTo" xml:space="preserve">
+  <data name="VmPage_MemTrackingPerNode" xml:space="preserve">
     <value>Configure by Processor Node</value>
   </data>
-  <data name="VmPage_ErrOpenFailed3" xml:space="preserve">
+  <data name="VmPage_SgxLaunchAccessDenied" xml:space="preserve">
     <value>Access Denied</value>
   </data>
-  <data name="VmPage_MsgWormholeClosed" xml:space="preserve">
+  <data name="VmPage_SgxLaunchReadOnly" xml:space="preserve">
     <value>Read Only</value>
   </data>
-  <data name="VmPage_MsgTimelineRestored" xml:space="preserve">
+  <data name="VmPage_SgxLaunchReadWrite" xml:space="preserve">
     <value>Read/Write</value>
   </data>
-  <data name="VmPage_ErrCloseFailed" xml:space="preserve">
-    <value>Optimization complete</value>
-  </data>
-  <data name="VmPage_MsgFeatureInDev" xml:space="preserve">
+  <data name="VmPage_OptimizeSuccessDesc" xml:space="preserve">
     <value>Virtual disk space reclaimed successfully</value>
   </data>
-  <data name="VmPage_MsgParallelUniverse" xml:space="preserve">
+  <data name="VmPage_OptimizeFail" xml:space="preserve">
     <value>Optimization failed</value>
   </data>
-  <data name="VmPage_MsgOperationOk4" xml:space="preserve">
-    <value>System exception</value>
-  </data>
-  <data name="VmPage_MsgRollbackComplete" xml:space="preserve">
-    <value>[VM-LOG] UI triggered save, current preview order: {0}</value>
-  </data>
-  <data name="VmPage_ErrRollbackFailed" xml:space="preserve">
-    <value>[VM-LOG] Disk save result: {0}</value>
-  </data>
-  <data name="VmPage_BtnReset" xml:space="preserve">
-    <value>[VM-LOG] Error during save: {0}</value>
-  </data>
-  <data name="VmPage_MsgProcessReset" xml:space="preserve">
+  <data name="VmPage_OperationFail" xml:space="preserve">
     <value>Operation failed</value>
   </data>
   <data name="VmPage_ErrRetrieveFailed2" xml:space="preserve">
     <value>Retrieval failed</value>
-  </data>
-  <data name="VmPage_MsgOperationOk5" xml:space="preserve">
-    <value>Operation successful</value>
   </data>
   <data name="VmPage_MsgSpacetimeCreated2" xml:space="preserve">
     <value>Spacetime created successfully</value>
@@ -2497,20 +2592,11 @@ The existing NAT switch is: '{0}'</value>
   <data name="VmPage_ErrOpenFailed4" xml:space="preserve">
     <value>Failed to open</value>
   </data>
-  <data name="VmPage_MsgWormholeClosed2" xml:space="preserve">
-    <value>Wormhole closed</value>
-  </data>
   <data name="VmPage_MsgTimelineRestored2" xml:space="preserve">
     <value>Timeline restored to normal</value>
   </data>
   <data name="VmPage_ErrCloseFailed2" xml:space="preserve">
     <value>Failed to close</value>
-  </data>
-  <data name="VmPage_MsgFeatureInDev2" xml:space="preserve">
-    <value>Feature under development</value>
-  </data>
-  <data name="VmPage_MsgParallelUniverse2" xml:space="preserve">
-    <value>Parallel Universe: Create a new VM instance based on this spacetime</value>
   </data>
   <data name="VmPage_MsgSpacetimeConverged2" xml:space="preserve">
     <value>Spacetime converged to the previous node</value>
@@ -2585,10 +2671,10 @@ The existing NAT switch is: '{0}'</value>
     <value>Configure launch authorization and runtime verification mode for secure enclaves</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMemSize" xml:space="preserve">
-    <value>Confidential Memory Size</value>
+    <value>Confidential Memory Size (MB)</value>
   </data>
   <data name="VmRAMSettings_DescSgxMemSize" xml:space="preserve">
-    <value>Total physically isolated memory allocated for confidential computing (unit: MB)</value>
+    <value>Total physically isolated memory allocated for confidential computing</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMsrDefault" xml:space="preserve">
     <value>MSR Runtime Control Default</value>
@@ -2603,7 +2689,19 @@ The existing NAT switch is: '{0}'</value>
     <value>Memory Optimization</value>
   </data>
   <data name="VmRAMSettings_ToggleColdHint" xml:space="preserve">
-    <value>Memory Activity Hint</value>
+    <value>Cold Memory Page Hint</value>
+  </data>
+  <data name="VmRAMSettings_ToggleHotHint" xml:space="preserve">
+    <value>Hot Memory Page Hint</value>
+  </data>
+  <data name="VmRAMSettings_NeedVirtualBacking" xml:space="preserve">
+    <value>This feature requires virtual memory backing (set Memory Mapping Mode to Virtual above)</value>
+  </data>
+  <data name="VmRAMSettings_LabelHugePages" xml:space="preserve">
+    <value>Huge Pages</value>
+  </data>
+  <data name="VmRAMSettings_DescHugePages" xml:space="preserve">
+    <value>Back VM memory with 1GB huge pages to improve performance for large-memory VMs</value>
   </data>
   <data name="VmRAMSettings_ToggleEpf" xml:space="preserve">
     <value>Para-virtualized Paging Optimization</value>
@@ -2612,10 +2710,10 @@ The existing NAT switch is: '{0}'</value>
     <value>Independent Compressed Memory Pool</value>
   </data>
   <data name="VmRAMSettings_LabelNumaBlockLimit" xml:space="preserve">
-    <value>NUMA Node Memory Block Limit</value>
+    <value>Max Memory Per Node (MB)</value>
   </data>
   <data name="VmRAMSettings_DescNumaBlockLimit" xml:space="preserve">
-    <value>Manually limit the maximum number of memory blocks observable by a single virtual NUMA node</value>
+    <value>Limit the maximum memory of a single virtual NUMA node</value>
   </data>
   <data name="VmRAMSettings_LabelDynMemStep" xml:space="preserve">
     <value>Dynamic Memory Adjustment Step</value>
@@ -2683,9 +2781,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="VmSpacetimeSettings_BtnOpenWormhole" xml:space="preserve">
     <value>Open Wormhole</value>
   </data>
-  <data name="VmSpacetimeSettings_BtnParallelUniverse" xml:space="preserve">
-    <value>Open Parallel Universe</value>
-  </data>
   <data name="VmSpacetimeSettings_BtnConverge" xml:space="preserve">
     <value>Spacetime Convergence</value>
   </data>
@@ -2728,14 +2823,53 @@ The existing NAT switch is: '{0}'</value>
   <data name="Status_Msg_RestartRequired" xml:space="preserve">
     <value>A restart is required before making further changes.</value>
   </data>
-  <data name="Status_Title_Warning" xml:space="preserve">
-    <value>Warning</value>
-  </data>
   <data name="Error_VmCreate_NoSystemPath" xml:space="preserve">
     <value>DefineSystem did not return VM path</value>
   </data>
   <data name="Error_VmCreate_NoGuid" xml:space="preserve">
     <value>Failed to get GUID of newly created VM</value>
+  </data>
+  <data name="Error_VmCreate_RollbackFailed" xml:space="preserve">
+    <value>Creation failed and the half-created VM '{0}' could not be removed automatically — please delete it manually. (Rollback error: {1})</value>
+  </data>
+  <data name="VmAdvanced_Title" xml:space="preserve">
+    <value>Advanced</value>
+  </data>
+  <data name="VmAdvanced_Hint" xml:space="preserve">
+    <value>Display settings and advanced parameters</value>
+  </data>
+  <data name="VmDashboard_DescAdvanced" xml:space="preserve">
+    <value>Advanced</value>
+  </data>
+  <data name="VmDashboard_HintAdvanced" xml:space="preserve">
+    <value>Display settings and advanced parameters</value>
+  </data>
+  <data name="VmAdvanced_ResolutionTitle" xml:space="preserve">
+    <value>Basic Session Default Resolution</value>
+  </data>
+  <data name="VmAdvanced_ResolutionHint" xml:space="preserve">
+    <value>Default, preset, or manual entry; width and height must be even.</value>
+  </data>
+  <data name="VmAdvanced_ResolutionAuto" xml:space="preserve">
+    <value>Default (Auto)</value>
+  </data>
+  <data name="VmAdvanced_Apply" xml:space="preserve">
+    <value>Apply</value>
+  </data>
+  <data name="VmAdvanced_ResolutionInvalid" xml:space="preserve">
+    <value>Enter a valid resolution, e.g. 1280 x 720</value>
+  </data>
+  <data name="VmAdvanced_ConsoleTitle" xml:space="preserve">
+    <value>Console Support</value>
+  </data>
+  <data name="VmAdvanced_NumLockTitle" xml:space="preserve">
+    <value>Enable NumLock at boot</value>
+  </data>
+  <data name="VmAdvanced_ConsoleHint" xml:space="preserve">
+    <value>Generation 2 VMs only. When off, the VM cannot be accessed via the console — suitable for streaming/RDP.</value>
+  </data>
+  <data name="VmAdvanced_ConsoleDisabledHint" xml:space="preserve">
+    <value>Console support is disabled for this VM. Access it via streaming or RDP.</value>
   </data>
   <data name="Error_VmCreate_NoGuardian" xml:space="preserve">
     <value>Failed to get or create UntrustedGuardian</value>
@@ -2772,5 +2906,569 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Usb_IdLabel" xml:space="preserve">
     <value>  ID:</value>
+  </data>
+  <data name="Error_Gpu_PowerOffTimeout" xml:space="preserve">
+    <value>Timed out waiting for the virtual machine to power off.</value>
+  </data>
+  <data name="Msg_Gpu_LinuxDetected" xml:space="preserve">
+    <value>Detecting Linux system, jumping to SSH setup...</value>
+  </data>
+  <data name="Msg_Gpu_LinuxAutoPrep" xml:space="preserve">
+    <value>Detected single Linux partition. Automating environment preparation...</value>
+  </data>
+  <data name="VmSecurity_Title" xml:space="preserve">
+    <value>Security</value>
+  </data>
+  <data name="VmSecurity_Hint" xml:space="preserve">
+    <value>Secure Boot and encryption protection</value>
+  </data>
+  <data name="VmSecurity_SecureBoot" xml:space="preserve">
+    <value>Secure Boot</value>
+  </data>
+  <data name="VmSecurity_Encryption" xml:space="preserve">
+    <value>Encryption Support</value>
+  </data>
+  <data name="VmSecurity_SecureBootDesc" xml:space="preserve">
+    <value>Help prevent unauthorized code from running at startup</value>
+  </data>
+  <data name="VmSecurity_TpmDesc" xml:space="preserve">
+    <value>Trusted Platform Module providing cryptographic services to the VM</value>
+  </data>
+  <data name="VmSecurity_Template" xml:space="preserve">
+    <value>Secure Boot Template</value>
+  </data>
+  <data name="VmSecurity_EncryptMigration" xml:space="preserve">
+    <value>Encrypt state and VM migration traffic</value>
+  </data>
+  <data name="VmSecurity_EncryptMigrationDesc" xml:space="preserve">
+    <value>Encrypt the VM's saved state and live-migration traffic</value>
+  </data>
+  <data name="VmSecurity_PolicySection" xml:space="preserve">
+    <value>Security Policy</value>
+  </data>
+  <data name="VmSecurity_Shielding" xml:space="preserve">
+    <value>Enable Shielding</value>
+  </data>
+  <data name="VmSecurity_ShieldingDesc" xml:space="preserve">
+    <value>Mark the VM as shielded; forces TPM and encryption on</value>
+  </data>
+  <data name="Log_Gpu_SelectedScript" xml:space="preserve">
+    <value>[Info] Selected script: {0}</value>
+  </data>
+  <data name="Log_Gpu_Syncing" xml:space="preserve">
+    <value>Syncing: {0} -&gt; {1}</value>
+  </data>
+  <data name="Log_Gpu_StartingVm" xml:space="preserve">
+    <value>[ExHyperV] Starting VM...</value>
+  </data>
+  <data name="Log_Gpu_UploadingDriverWsl" xml:space="preserve">
+    <value>Uploading driver and WSL libraries...</value>
+  </data>
+  <data name="Log_Gpu_DownloadingScript" xml:space="preserve">
+    <value>Downloading remote script inside VM: {0}</value>
+  </data>
+  <data name="Log_Gpu_ExecutingAttempt" xml:space="preserve">
+    <value>[Attempt {0}] Executing script...</value>
+  </data>
+  <data name="Log_Gpu_RebootRequired" xml:space="preserve">
+    <value>VM reboot required. Restarting now...</value>
+  </data>
+  <data name="Log_Gpu_VmBackOnline" xml:space="preserve">
+    <value>VM is back online. Resuming deployment...</value>
+  </data>
+  <data name="Error_Gpu_NoMac" xml:space="preserve">
+    <value>Failed to get VM MAC address.</value>
+  </data>
+  <data name="Error_Gpu_NoIpv4" xml:space="preserve">
+    <value>No valid IPv4 address found.</value>
+  </data>
+  <data name="Msg_Gpu_Cancelled" xml:space="preserve">
+    <value>Cancelled</value>
+  </data>
+  <data name="Error_Gpu_RebootNoResponse" xml:space="preserve">
+    <value>VM failed to come back online after reboot.</value>
+  </data>
+  <data name="Error_Gpu_ScriptNoSuccess" xml:space="preserve">
+    <value>Script execution failed (no success signal).</value>
+  </data>
+  <data name="Error_Gpu_MaxReboots" xml:space="preserve">
+    <value>Maximum reboot attempts reached.</value>
+  </data>
+  <data name="Error_Gpu_LinuxGeneric" xml:space="preserve">
+    <value>Error: {0}</value>
+  </data>
+  <data name="VmSpacetimeSettings_HintCloseWormholeFirst" xml:space="preserve">
+    <value>A wormhole is open — close it before you can create / delete / converge spacetimes.</value>
+  </data>
+  <data name="Cpu_ApicMode" xml:space="preserve">
+    <value>APIC Mode</value>
+  </data>
+  <data name="Cpu_ApicModeDesc" xml:space="preserve">
+    <value>Switches the VM's interrupt controller mode, affecting compatibility and scalability</value>
+  </data>
+  <data name="Cpu_L3CacheWays" xml:space="preserve">
+    <value>L3 Cache Ways</value>
+  </data>
+  <data name="Cpu_L3CacheWaysDesc" xml:space="preserve">
+    <value>Sets the number of L3 cache ways visible to the VM</value>
+  </data>
+  <data name="Cpu_L3DistPolicy" xml:space="preserve">
+    <value>L3 Processor Distribution Policy</value>
+  </data>
+  <data name="Cpu_L3DistPolicyDesc" xml:space="preserve">
+    <value>Sets how virtual processors are distributed across L3 cache domains</value>
+  </data>
+  <data name="Cpu_PageShatter" xml:space="preserve">
+    <value>Large-Page Shattering</value>
+  </data>
+  <data name="Cpu_PageShatterDesc" xml:space="preserve">
+    <value>Sets how large memory pages are split during second-level address translation</value>
+  </data>
+  <data name="Cpu_IgnoreHostMaxFreq" xml:space="preserve">
+    <value>Ignore Host Max Frequency</value>
+  </data>
+  <data name="Cpu_IgnoreHostMaxFreqDesc" xml:space="preserve">
+    <value>Allows the VM CPU to ignore the maximum frequency set by the host</value>
+  </data>
+  <data name="Cpu_PerfmonPmu" xml:space="preserve">
+    <value>Expose Performance Monitoring Unit (PMU)</value>
+  </data>
+  <data name="Cpu_PerfmonPmuDesc" xml:space="preserve">
+    <value>Allows the VM to access general hardware performance counters</value>
+  </data>
+  <data name="Cpu_PerfmonLbr" xml:space="preserve">
+    <value>Expose Last Branch Records (LBR)</value>
+  </data>
+  <data name="Cpu_PerfmonLbrDesc" xml:space="preserve">
+    <value>Allows the VM to read recently executed branch records</value>
+  </data>
+  <data name="Cpu_PerfmonPebs" xml:space="preserve">
+    <value>Expose Precise Event-Based Sampling (PEBS)</value>
+  </data>
+  <data name="Cpu_PerfmonPebsDesc" xml:space="preserve">
+    <value>Allows the VM to collect precise performance event samples</value>
+  </data>
+  <data name="Cpu_PerfmonIpt" xml:space="preserve">
+    <value>Expose Processor Trace (Intel PT)</value>
+  </data>
+  <data name="Cpu_PerfmonIptDesc" xml:space="preserve">
+    <value>Allows the VM to record the processor instruction execution flow</value>
+  </data>
+  <data name="Cpu_FreqCap" xml:space="preserve">
+    <value>Max Frequency (MHz)</value>
+  </data>
+  <data name="Cpu_FreqCapDesc" xml:space="preserve">
+    <value>Sets the highest frequency available to the VM CPU</value>
+  </data>
+  <data name="Cpu_FreqMin" xml:space="preserve">
+    <value>Min Frequency (MHz)</value>
+  </data>
+  <data name="Cpu_FreqMinDesc" xml:space="preserve">
+    <value>Sets the lowest frequency available to the VM CPU</value>
+  </data>
+  <data name="Cpu_FreqDesired" xml:space="preserve">
+    <value>Desired Frequency (MHz)</value>
+  </data>
+  <data name="Cpu_FreqDesiredDesc" xml:space="preserve">
+    <value>Sets the target operating frequency of the VM CPU</value>
+  </data>
+  <data name="Cpu_Epp" xml:space="preserve">
+    <value>Energy/Perf Preference</value>
+  </data>
+  <data name="Cpu_EppDesc" xml:space="preserve">
+    <value>Sets the VM CPU preference between performance and energy efficiency</value>
+  </data>
+  <data name="Cpu_ActivityWindow" xml:space="preserve">
+    <value>Activity Window</value>
+  </data>
+  <data name="Cpu_ActivityWindowDesc" xml:space="preserve">
+    <value>Sets the activity evaluation window used for automatic VM CPU frequency scaling</value>
+  </data>
+  <data name="Cpu_ExtVirtExt" xml:space="preserve">
+    <value>Hardware Isolation Extensions</value>
+  </data>
+  <data name="Cpu_ExtVirtExtDesc" xml:space="preserve">
+    <value>Allows the VM to expose hardware-isolation extensions to nested VMs</value>
+  </data>
+  <data name="Cpu_MaxHwIsoGuests" xml:space="preserve">
+    <value>Max HW-Isolated Guests</value>
+  </data>
+  <data name="Cpu_MaxHwIsoGuestsDesc" xml:space="preserve">
+    <value>Sets the maximum number of nested hardware-isolated VMs that can be created</value>
+  </data>
+  <data name="Cpu_MaxClusterPerSocket" xml:space="preserve">
+    <value>Clusters (CCX) per Socket</value>
+  </data>
+  <data name="Cpu_MaxClusterPerSocketDesc" xml:space="preserve">
+    <value>Sets the maximum number of core complexes in each virtual socket</value>
+  </data>
+  <data name="Cpu_MaxProcPerL3" xml:space="preserve">
+    <value>Processors per L3 (CCX)</value>
+  </data>
+  <data name="Cpu_MaxProcPerL3Desc" xml:space="preserve">
+    <value>Sets the maximum number of virtual processors in each virtual L3 cache</value>
+  </data>
+  <data name="CpuEnum_Apic_Default" xml:space="preserve">
+    <value>Auto</value>
+  </data>
+  <data name="CpuEnum_Apic_Legacy" xml:space="preserve">
+    <value>xAPIC</value>
+  </data>
+  <data name="CpuEnum_Apic_X2Apic" xml:space="preserve">
+    <value>x2APIC</value>
+  </data>
+  <data name="CpuEnum_Apic_Apic" xml:space="preserve">
+    <value>APIC</value>
+  </data>
+  <data name="CpuEnum_L3_SmallToLarge" xml:space="preserve">
+    <value>Small to Large</value>
+  </data>
+  <data name="CpuEnum_L3_LargeToSmall" xml:space="preserve">
+    <value>Large to Small</value>
+  </data>
+  <data name="CpuEnum_L3_EvenSmallToLarge" xml:space="preserve">
+    <value>Even, Small to Large</value>
+  </data>
+  <data name="CpuEnum_L3_EvenLargeToSmall" xml:space="preserve">
+    <value>Even, Large to Small</value>
+  </data>
+  <data name="CpuEnum_Shatter_Default" xml:space="preserve">
+    <value>Default</value>
+  </data>
+  <data name="CpuEnum_Shatter_AlwaysEnabled" xml:space="preserve">
+    <value>Always Shatter (4K)</value>
+  </data>
+  <data name="CpuEnum_Shatter_AlwaysDisabled" xml:space="preserve">
+    <value>Never Shatter (large pages)</value>
+  </data>
+  <data name="Gpu_StalePathTitle" xml:space="preserve">
+    <value>GPU path changed</value>
+  </data>
+  <data name="Gpu_StalePathMessage" xml:space="preserve">
+    <value>The GPU assigned to VM "{0}" is still on the host, but its device path has changed, so it cannot start.
+
+Update the reference and retry?</value>
+  </data>
+  <data name="Gpu_StaleRebindConfirm" xml:space="preserve">
+    <value>Update and retry</value>
+  </data>
+  <data name="Gpu_StaleTitle" xml:space="preserve">
+    <value>GPU partition not found</value>
+  </data>
+  <data name="Gpu_StaleMessage" xml:space="preserve">
+    <value>The GPU assigned to VM "{0}" no longer exists on this host, so it cannot start.
+
+Clear it and retry?</value>
+  </data>
+  <data name="Gpu_StaleRemoveConfirm" xml:space="preserve">
+    <value>Clear and retry</value>
+  </data>
+  <data name="Gpu_StaleRepairFail" xml:space="preserve">
+    <value>Failed to repair the invalid GPU partition.</value>
+  </data>
+  <data name="Gpu_StaleRebound" xml:space="preserve">
+    <value>Updated {0} GPU reference(s); retrying start…</value>
+  </data>
+  <data name="Gpu_StaleRemovedMsg" xml:space="preserve">
+    <value>Cleared {0} invalid GPU partition(s); retrying start…</value>
+  </data>
+  <data name="Gpu_StaleRepaired" xml:space="preserve">
+    <value>GPU configuration repaired; retrying start…</value>
+  </data>
+  <data name="Storage_StaleDiskTitle" xml:space="preserve">
+    <value>Physical disk not found</value>
+  </data>
+  <data name="Storage_StaleDiskMessage" xml:space="preserve">
+    <value>The pass-through physical disk(s) ({1}) attached to VM "{0}" have been unplugged or removed from the host, so it cannot start.
+
+Remove them from storage and retry? Cancel to re-plug the device and try again.</value>
+  </data>
+  <data name="Storage_StaleDiskConfirm" xml:space="preserve">
+    <value>Remove and start</value>
+  </data>
+  <data name="Storage_StaleDiskRemoved" xml:space="preserve">
+    <value>Removed {0} missing physical disk(s); retrying start…</value>
+  </data>
+  <data name="Storage_StaleDiskRemoveFail" xml:space="preserve">
+    <value>Failed to remove the missing physical disk.</value>
+  </data>
+  <data name="Storage_PhysicalDiskNumbered" xml:space="preserve">
+    <value>Physical disk {0}</value>
+  </data>
+  <data name="Storage_PhysicalDisk" xml:space="preserve">
+    <value>a failed storage device</value>
+  </data>
+  <data name="VmDelete_DestroyVerifyFail" xml:space="preserve">
+    <value>The engine reported success but VM '{0}' is still registered (may be in a saved state or TPM-protected, and was not fully destroyed).</value>
+  </data>
+  <data name="VmDelete_TurnOffFail" xml:space="preserve">
+    <value>VM '{0}' could not be turned off.</value>
+  </data>
+  <data name="GpuRepair_VmcxNotFound" xml:space="preserve">
+    <value>The .vmcx configuration file for this VM was not found.</value>
+  </data>
+  <data name="GpuRepair_VmRunning" xml:space="preserve">
+    <value>The VM is running. Shut it down before repairing.</value>
+  </data>
+  <data name="GpuRepair_ValidationFailed" xml:space="preserve">
+    <value>Structure validation failed after repair: </value>
+  </data>
+  <data name="GpuRepair_RepairFailed" xml:space="preserve">
+    <value>Repair failed: </value>
+  </data>
+  <data name="VmConsole_TemplateNotFound" xml:space="preserve">
+    <value>Default template not found: {0} {1}</value>
+  </data>
+  <data name="Vmcx_DllLoadFail" xml:space="preserve">
+    <value>Failed to load VmDataStore.dll (must run on a Hyper-V host).</value>
+  </data>
+  <data name="Vmcx_CurrentNullNode" xml:space="preserve">
+    <value>Current returned a null node.</value>
+  </data>
+  <data name="Vmcx_ManifestEntryNotFound" xml:space="preserve">
+    <value>No manifest entry found for instance={0}.</value>
+  </data>
+  <data name="Vmcx_ManifestSizeReadFail" xml:space="preserve">
+    <value>Failed to read manifest/size.</value>
+  </data>
+  <data name="Vmcx_SizeMismatch" xml:space="preserve">
+    <value>size={0} does not match the actual vdev count {1}.</value>
+  </data>
+  <data name="Vmcx_ManifestGap" xml:space="preserve">
+    <value>Manifest numbering gap: vdev{0}</value>
+  </data>
+  <data name="Vmcx_OrphanNode" xml:space="preserve">
+    <value>Orphan data node: /_{0}_ has leftover data but no manifest entry (a true orphan; should be removed).</value>
+  </data>
+  <data name="Vmcx_GhostDevice" xml:space="preserve">
+    <value>Ghost device: manifest vdev{0:D3} (instance={1}) data node {2} (should be a functional device but has no data) → the VM will fail to start (remove this entry).</value>
+  </data>
+  <data name="Vmcx_GhostMissing" xml:space="preserve">
+    <value>missing</value>
+  </data>
+  <data name="Vmcx_GhostEmpty" xml:space="preserve">
+    <value>empty</value>
+  </data>
+  <data name="Vmcx_IncompleteDda" xml:space="preserve">
+    <value>Incomplete DDA device: vdev{0:D3} (instance={1}) is missing HostResources/HostResource/Instance → the VM will fail to start.</value>
+  </data>
+  <data name="Vmcx_OpFailHr" xml:space="preserve">
+    <value>{0} failed hr=0x{1}</value>
+  </data>
+  <data name="HostPageViewModel_ComponentSeparator" xml:space="preserve">
+    <value>; </value>
+  </data>
+  <data name="Xaml_Quantity" xml:space="preserve">
+    <value>Quantity</value>
+  </data>
+  <data name="VmPage_InvalidQuantity" xml:space="preserve">
+    <value>Quantity must be an integer no less than 1.</value>
+  </data>
+  <data name="VmPage_BatchNewDiskOnly" xml:space="preserve">
+    <value>Batch creation supports new disks only.</value>
+  </data>
+  <data name="VmPage_CreatingBatch" xml:space="preserve">
+    <value>Creating {0} virtual machines…</value>
+  </data>
+  <data name="VmPage_BatchAllOk" xml:space="preserve">
+    <value>Successfully created {0} virtual machines.</value>
+  </data>
+  <data name="VmPage_BatchPartial" xml:space="preserve">
+    <value>Done: {0} created, {1} failed.</value>
+  </data>
+  <data name="VmPage_BatchStartFail" xml:space="preserve">
+    <value> ({0} failed to start)</value>
+  </data>
+  <data name="VmPage_MultiDeleteTitle" xml:space="preserve">
+    <value>Delete Virtual Machines</value>
+  </data>
+  <data name="VmPage_MultiDeleteConfirm" xml:space="preserve">
+    <value>Delete the {0} selected virtual machines? Disk files will be kept.</value>
+  </data>
+  <data name="VmPage_MultiDeleteDone" xml:space="preserve">
+    <value>Deleted {0} virtual machines.</value>
+  </data>
+  <data name="VmPage_MultiDeleteFail" xml:space="preserve">
+    <value>Deleted {0}, {1} failed.</value>
+  </data>
+  <data name="VmPage_MultiPurgeConfirm" xml:space="preserve">
+    <value>Permanently delete the {0} selected virtual machines? Their config and disk files will be removed and cannot be recovered:</value>
+  </data>
+  <data name="VmPage_MultiPurgeDone" xml:space="preserve">
+    <value>Permanently deleted {0} virtual machines.</value>
+  </data>
+  <data name="VmPage_MultiPurgeFail" xml:space="preserve">
+    <value>Permanently deleted {0}, {1} failed.</value>
+  </data>
+  <data name="Cpu_MaxProcessorsPerNumaNode" xml:space="preserve">
+    <value>Maximum processors per NUMA node</value>
+  </data>
+  <data name="Cpu_MaxProcessorsPerNumaNodeDesc" xml:space="preserve">
+    <value>Controls the size of virtual processor NUMA groups</value>
+  </data>
+  <data name="Cpu_MaxNumaNodesPerSocket" xml:space="preserve">
+    <value>Maximum NUMA nodes per socket</value>
+  </data>
+  <data name="Cpu_MaxNumaNodesPerSocketDesc" xml:space="preserve">
+    <value>Controls how many NUMA groups each virtual CPU socket contains</value>
+  </data>
+  <data name="Cpu_PhysicalAddressWidth" xml:space="preserve">
+    <value>Virtual machine address bits</value>
+  </data>
+  <data name="Cpu_PhysicalAddressWidthDesc" xml:space="preserve">
+    <value>Sets the physical address width visible to the VM</value>
+  </data>
+  <data name="Cpu_LpiMode" xml:space="preserve">
+    <value>ARM64 device interrupt mode (LPI)</value>
+  </data>
+  <data name="Cpu_LpiModeDesc" xml:space="preserve">
+    <value>Sets how the VM uses LPI to receive device interrupts</value>
+  </data>
+  <data name="CpuEnum_Lpi_Default" xml:space="preserve">
+    <value>Default</value>
+  </data>
+  <data name="CpuEnum_Lpi_Disabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="CpuEnum_Lpi_Enabled" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="VmPcie_Title" xml:space="preserve">
+    <value>PCIe</value>
+  </data>
+  <data name="VmPcie_Hint" xml:space="preserve">
+    <value>PCIe topology and device features</value>
+  </data>
+  <data name="VmPcie_SystemSection" xml:space="preserve">
+    <value>PCIe presentation</value>
+  </data>
+  <data name="VmPcie_EmulationTitle" xml:space="preserve">
+    <value>PCIe emulation</value>
+  </data>
+  <data name="VmPcie_EmulationDesc" xml:space="preserve">
+    <value>Present devices to the VM as standard PCIe devices</value>
+  </data>
+  <data name="VmPcie_Irreversible" xml:space="preserve">
+    <value>Once enabled, Hyper-V management interfaces cannot disable it</value>
+  </data>
+  <data name="VmPcie_Enabled" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="VmPcie_Enable" xml:space="preserve">
+    <value>Enable</value>
+  </data>
+  <data name="VmPcie_TopologyTitle" xml:space="preserve">
+    <value>PCIe topology</value>
+  </data>
+  <data name="VmPcie_TopologyDesc" xml:space="preserve">
+    <value>Present the PCIe topology of devices</value>
+  </data>
+  <data name="VmPcie_TopologyDefault" xml:space="preserve">
+    <value>Default</value>
+  </data>
+  <data name="VmPcie_TopologyHost" xml:space="preserve">
+    <value>Match host</value>
+  </data>
+  <data name="VmPcie_Apply" xml:space="preserve">
+    <value>Apply</value>
+  </data>
+  <data name="VmPcie_BootSection" xml:space="preserve">
+    <value>Startup</value>
+  </data>
+  <data name="VmPcie_BootTitle" xml:space="preserve">
+    <value>vPCI during startup</value>
+  </data>
+  <data name="VmPcie_BootDesc" xml:space="preserve">
+    <value>Load the vPCI driver in UEFI to discover supported devices (NVMe, AziHsm)</value>
+  </data>
+  <data name="VmPcie_DevicesSection" xml:space="preserve">
+    <value>Assigned PCIe devices</value>
+  </data>
+  <data name="VmPcie_DeviceModeTitle" xml:space="preserve">
+    <value>Device presentation</value>
+  </data>
+  <data name="VmPcie_DeviceModeDesc" xml:space="preserve">
+    <value>Choose the Hyper-V channel or a standard PCIe device</value>
+  </data>
+  <data name="VmPcie_Paravirtualized" xml:space="preserve">
+    <value>Paravirtualization</value>
+  </data>
+  <data name="VmPcie_Emulated" xml:space="preserve">
+    <value>Emulation</value>
+  </data>
+  <data name="VmPcie_NoDevices" xml:space="preserve">
+    <value>No PCIe devices are assigned</value>
+  </data>
+  <data name="VmPcie_ConfirmTitle" xml:space="preserve">
+    <value>Warning: PCIe emulation cannot be disabled</value>
+  </data>
+  <data name="VmPcie_ConfirmMessage" xml:space="preserve">
+    <value>After PCIe emulation is enabled, it cannot be disabled through Hyper-V management interfaces. Continue?</value>
+  </data>
+  <data name="VmPcie_EmulationEnabledMessage" xml:space="preserve">
+    <value>PCIe emulation enabled</value>
+  </data>
+  <data name="VmPcie_AppliedMessage" xml:space="preserve">
+    <value>PCIe settings applied</value>
+  </data>
+  <data name="VmPcie_AzureFeatureSetOpenFailed" xml:space="preserve">
+    <value>Failed to open the host registry configuration required for PCIe emulation.</value>
+  </data>
+  <data name="VmPcie_AzureFeatureSetEnableFailed" xml:space="preserve">
+    <value>Failed to enable the host policy required for PCIe emulation: {0}</value>
+  </data>
+  <data name="VmPcie_AzureFeatureSetRestoreFailed" xml:space="preserve">
+    <value>Failed to restore the host policy used temporarily for PCIe emulation: {0}</value>
+  </data>
+  <data name="VmPcie_SettingsNotFound" xml:space="preserve">
+    <value>Virtual machine settings were not found.</value>
+  </data>
+  <data name="VmRAMSettings_MmioSection" xml:space="preserve">
+    <value>MMIO space</value>
+  </data>
+  <data name="VmRAMSettings_LowMmioSize" xml:space="preserve">
+    <value>32-bit MMIO space (MB)</value>
+  </data>
+  <data name="VmRAMSettings_LowMmioSizeDesc" xml:space="preserve">
+    <value>Space size provided for PCIe devices below 4 GB</value>
+  </data>
+  <data name="VmRAMSettings_HighMmioSize" xml:space="preserve">
+    <value>64-bit MMIO space (MB)</value>
+  </data>
+  <data name="VmRAMSettings_HighMmioSizeDesc" xml:space="preserve">
+    <value>Space size provided for PCIe devices above 4 GB</value>
+  </data>
+  <data name="VmRAMSettings_HighMmioBase" xml:space="preserve">
+    <value>64-bit MMIO space start (MB)</value>
+  </data>
+  <data name="Common_ClassListSeparator" xml:space="preserve">
+    <value>, </value>
+  </data>
+  <data name="PCIePage_ClassWithChildTypes" xml:space="preserve">
+    <value>{0} (child devices: {1})</value>
+  </data>
+  <data name="VmAdvanced_FullScsiTitle" xml:space="preserve">
+    <value>Full SCSI command set</value>
+  </data>
+  <data name="VmAdvanced_FullScsiDesc" xml:space="preserve">
+    <value>Allow the virtual machine to send unfiltered SCSI commands to attached physical disks</value>
+  </data>
+  <data name="VmAdvanced_LockOnDisconnectTitle" xml:space="preserve">
+    <value>Lock on disconnect</value>
+  </data>
+  <data name="VmAdvanced_LockOnDisconnectDesc" xml:space="preserve">
+    <value>Lock the virtual machine operating system when disconnecting from its console</value>
+  </data>
+  <data name="VmAdvanced_TurnOffOnGuestRestartTitle" xml:space="preserve">
+    <value>Turn restart into shutdown</value>
+  </data>
+  <data name="VmAdvanced_TurnOffOnGuestRestartDesc" xml:space="preserve">
+    <value>Turn off the virtual machine instead when its operating system requests a restart</value>
+  </data>
+  <data name="VmAdvanced_HibernationTitle" xml:space="preserve">
+    <value>Virtual machine hibernation (S4)</value>
+  </data>
+  <data name="VmAdvanced_HibernationDesc" xml:space="preserve">
+    <value>Allow the virtual machine to use S4 hibernation and fast startup</value>
   </data>
 </root>

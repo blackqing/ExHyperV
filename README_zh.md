@@ -149,13 +149,13 @@ Root 调度器发布于Windows 10 Build 17134，它会收集工作负荷 CPU 使
 虚拟机开启嵌套虚拟化以及 HyperV 功能后，虚拟机的任务管理器将显示L1/L2/L3缓存拓扑，并不再标记为“虚拟机：是”，对于过虚拟化有一定帮助。
 
 <div align="center">
-<img width="616" height="532" alt="image" src="https://github.com/user-attachments/assets/00c838f1-91ef-42db-bf21-34c5b49b08b9" />
+<img width="616" height="487" alt="image" src="https://github.com/Justsenger/ExHyperV/blob/main/img/NestedVirtualization.png?raw=true" />
 </div>
 
 
 ##### 迁移兼容性
 
-开启后将屏蔽 CPU 的高级指令集（如 AES, AVX, AVX2, FMA3, SHA, SSE4A 等），便于在不同硬件的宿主上进行实时迁移。普通用户无需开启。
+开启后将屏蔽 CPU 的部分指令集，取决于 [cpu-migration-compatibility.md](doc/cpu-migration-compatibility.md)，便于在不同硬件的宿主上进行实时迁移。普通用户无需开启。
 
 ##### 旧系统兼容性
 
@@ -167,7 +167,7 @@ Root 调度器发布于Windows 10 Build 17134，它会收集工作负荷 CPU 使
 
 ##### 暴露架构性能监控单元
 
-开启后透传 CPU 的硬件计数器，允许虚拟机里的开发工具直接访问物理 CPU 的性能监测硬件。
+开启后透传 CPU 的硬件计数器，允许虚拟机里的开发工具直接访问物理 CPU 的性能监测硬件，需宿主支持。
 
 ##### 暴露频率监视寄存器
 
@@ -175,11 +175,22 @@ Root 调度器发布于Windows 10 Build 17134，它会收集工作负荷 CPU 使
 
 ##### 禁用侧信道攻击缓解 
 
-开启后关闭对 Spectre、Meltdown等漏洞的软件补丁，小幅提升性能，虚拟化安全性下降。
+开启后关闭 IBRS / IBRS_ALL / STIBP / IBPB / SSBD / MD_CLEAR / TSX_CTRL 特性，小幅提升性能，虚拟化安全性下降。
 
 ##### 启用插槽拓扑 
 
-开启后将为虚拟机模拟多个物理插槽，对于多个物理处理器的系统或许有用。
+开启后让虚拟机的插槽拓扑跟随宿主的物理插槽来划分，便于虚拟机按真实插槽做 NUMA 调度。
+
+##### APIC 模式
+
+- 自动（默认，交给 Hyper-V 选择）
+- xAPIC（传统，MMIO 访问，APIC ID 只有 8 位 → 最多寻址 255 个）
+- x2APIC（较新，MSR 访问，APIC ID 32 位 → 能寻址海量处理器）
+- Apic（xAPIC + x2APIC 并存，虚拟机开机走 xAPIC、运行中可升级到 x2APIC）
+
+##### 自定义 CPU 名称
+
+允许自定义 CPU 名称，最长 48 字节的 ASCII 字符串，至少需要 Build 20348。
 
 ##### CPU 绑定
 
@@ -192,9 +203,67 @@ CPU 绑定实现基于 CPU 组（经典调度器+核心调度器）+ 进程亲�
 > [!CAUTION]
 > 以下为实验功能，慎用。
 
-##### 自定义 CPU 名称
+##### L3 缓存路数
 
-允许自定义 CPU 名称，最长 48 字节的 ASCII 字符串，至少需要 Build 20348。
+手动指定虚拟机所见的 L3 路数。当集群中不同宿主的 L3 几何不一样时，将虚拟机的 L3 路数统一为固定值，能让虚拟机里依赖缓存拓扑的软件在迁移前后看到一致的缓存信息。
+
+##### L3 处理器分布策略
+
+决定 vCPU 利用 L3 域的策略。四种策略（由小到大 / 由大到小 / 均匀·由小到大 / 均匀·由大到小）：
+
+- 「由小到大 / 由大到小」：优先分配容量小 / 大的 L3 域。
+- 「均匀」：尽量把 vCPU 平摊到各 L3 域。
+
+##### 大页拆分
+
+决定 SLAT（二级地址翻译）的拆分策略。
+
+- 始终拆分：SLAT 一律用 4KB 小页。
+- 从不拆分：尽量用大页。
+- 默认：由平台和隔离模式自行决定。
+
+##### 忽略宿主频率上限
+
+解除宿主对虚拟机的频率上限约束，需要 CPU 支持调频让渡能力。
+
+##### 暴露 PMU / LBR / PEBS / IPT
+
+将物理 CPU 的性能监控硬件透传给虚拟机，供虚拟机里的性能分析与调试工具直接使用，需宿主支持。
+
+- PMU：硬件性能计数器（周期、指令数、缓存命中 / 缺失、分支预测失败等）。
+- LBR：末级分支记录，还原热点调用路径。
+- PEBS：精确事件采样，把事件对准到触发它的具体指令。
+- IPT：处理器追踪，低开销记录完整执行控制流。
+
+##### 频率上限 / 下限 / 目标（MHz）
+
+设定虚拟机 CPU 的运行频率，需要 CPU 支持调频让渡能力。
+
+- 上限：频率不超过此值。
+- 下限：频率不低于此值。
+- 目标：尽量运行在此频率（会覆盖能效偏好与自动调频窗口）。
+
+##### 能效偏好（EPP）
+
+0–255 的能效偏好，越小越偏性能、越大越偏省电，需要 CPU 支持调频让渡能力。
+
+##### 自动调频窗口
+
+CPU 评估负载、自动调频的时间窗，值越小反应越快，需要 CPU 支持调频让渡能力。
+
+##### 扩展虚拟化扩展 / 最大硬件隔离子机数
+
+为机密虚拟机开启硬件隔离，需要 CPU 提供机密计算能力（Intel TDX / AMD SEV-SNP）。
+
+- 扩展虚拟化扩展：为机密虚拟机开启硬件隔离。
+- 最大硬件隔离子机数：限制嵌套硬件隔离虚拟机的数量。
+
+##### 每插槽 CCX 数 / 每 L3 处理器数
+
+为虚拟机模拟 AMD 的核簇（CCX）与 L3 共享拓扑，仅 AMD 平台有效。
+
+- 每插槽 CCX 数：每个插槽划分成几个核簇。
+- 每 L3 处理器数：每个 L3 域内共享同一块 L3 的核心数。
 
 ---
 ### 内存
@@ -779,6 +848,8 @@ ARM 没有 Ring 环，用的是异常级别（Exception Levels）：
 ### 🌌 传说
 ![](https://img.shields.io/badge/传说-USER--09837-24292e?style=for-the-badge&logo=starship&logoColor=BE64FF&labelColor=24292e&color=BE64FF)
 <a href="https://github.com/PIKACHUIM"><img src="https://img.shields.io/badge/传说-PIKACHUIM-24292e?style=for-the-badge&logo=starship&logoColor=BE64FF&labelColor=24292e&color=BE64FF" /></a> 
+![](https://img.shields.io/badge/传说-USER--d6636-24292e?style=for-the-badge&logo=starship&logoColor=BE64FF&labelColor=24292e&color=BE64FF)
+![](https://img.shields.io/badge/传说-Ermo-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
 
 ---
 
@@ -788,6 +859,13 @@ ARM 没有 Ring 环，用的是异常级别（Exception Levels）：
 ![](https://img.shields.io/badge/达人-LinearKF-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
 ![](https://img.shields.io/badge/达人-User--7bdd5-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
 ![](https://img.shields.io/badge/达人-Glushkov-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+![](https://img.shields.io/badge/达人-Cz-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+![](https://img.shields.io/badge/达人-Ermo-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+![](https://img.shields.io/badge/达人-User--05ddd-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+![](https://img.shields.io/badge/达人-User--呱叽呱叽-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+![](https://img.shields.io/badge/达人-User--.Hello-24292e?style=for-the-badge&logo=expertsexchange&logoColor=FFBF00&labelColor=24292e&color=FFBF00)
+
+
 ---
 
 ### 🔹 初心

@@ -21,8 +21,6 @@ namespace ExHyperV.Views
     {
         private Dictionary<string, List<SpacetimeNode>> _treeMap = new();
         private Dictionary<string, int> _subtreeLeafCount = new(); // 存储每个节点的叶子总数
-        private Point _dragStartPos;
-        private Point _dragStartOffset;
         private Point _selectedNodePos;
         private Point _currentNodePos;
         private bool _isDragging = false;
@@ -50,13 +48,12 @@ namespace ExHyperV.Views
                     }
                 }
             };
-            _liveTimer.Start();
 
             this.DataContextChanged += (s, e) => {
                 if (_boundVm != null)
                 {
                     _boundVm.PropertyChanged -= OnVmPropertyChanged;
-                    UnsubscribeNodeEvents(_boundVm.SpacetimeNodes); // ★ 新增
+                    UnsubscribeNodeEvents(_boundVm.SpacetimeNodes);
                 }
 
                 if (DataContext is VirtualMachinesPageViewModel vm)
@@ -72,14 +69,42 @@ namespace ExHyperV.Views
                 }
             };
 
-            this.Loaded += (s, e) => {
-                if (_needsInitialCenter) RenderSpacetimeFlow();
-            };
-            ApplicationThemeManager.Changed += (theme, color) =>
-            {
-                Dispatcher.Invoke(RenderSpacetimeFlow);
-            };
+            this.Loaded += OnViewLoaded;
+            this.Unloaded += OnViewUnloaded;
         }
+
+        // 本视图由 VirtualMachinesPage 的 ContentControl 用 DataTemplate 承载，每次切到时空面板都重建一个新实例。
+        // _liveTimer(被 Dispatcher 计时队列强引用)与静态事件 ApplicationThemeManager.Changed 若不在卸载时拆掉，
+        // 会永久钉住每个废弃实例（静态事件尤甚），且隐藏视图仍每秒空转渲染。故配对称的 Loaded/Unloaded 收尾。
+        private void OnViewLoaded(object sender, RoutedEventArgs e)
+        {
+            _liveTimer.Start();
+            ApplicationThemeManager.Changed -= OnThemeChanged;   // 幂等：防 Loaded 多次触发（缓存页往返）重复订阅
+            ApplicationThemeManager.Changed += OnThemeChanged;
+            if (_boundVm != null)
+            {
+                // 与 OnViewUnloaded 的退订对称、幂等重订阅：防卸载后同实例再次 Loaded（可视树临时移除/往返）丢失更新
+                _boundVm.PropertyChanged -= OnVmPropertyChanged;
+                _boundVm.PropertyChanged += OnVmPropertyChanged;
+                UnsubscribeNodeEvents(_boundVm.SpacetimeNodes);
+                SubscribeNodeEvents(_boundVm.SpacetimeNodes);
+            }
+            if (_needsInitialCenter) RenderSpacetimeFlow();
+        }
+
+        private void OnViewUnloaded(object sender, RoutedEventArgs e)
+        {
+            _liveTimer.Stop();
+            ApplicationThemeManager.Changed -= OnThemeChanged;
+            // 退订 VM 与节点事件：否则长生命期的页 VM(单例)经事件钉住本应被丢弃的视图实例(每次切到时空面板都重建一个)
+            if (_boundVm != null)
+            {
+                _boundVm.PropertyChanged -= OnVmPropertyChanged;
+                UnsubscribeNodeEvents(_boundVm.SpacetimeNodes);
+            }
+        }
+
+        private void OnThemeChanged(ApplicationTheme theme, Color color) => Dispatcher.Invoke(RenderSpacetimeFlow);
 
         private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
@@ -88,8 +113,8 @@ namespace ExHyperV.Views
             if (e.PropertyName == nameof(VirtualMachinesPageViewModel.SpacetimeNodes))
             {
                 Debug.WriteLine($"[DRAG] !!! SpacetimeNodes changed -> RenderSpacetimeFlow (isDragging={_isDragging})");
-                UnsubscribeNodeEvents(_boundVm?.SpacetimeNodes); // ★ 先解绑旧的
-                SubscribeNodeEvents(_boundVm?.SpacetimeNodes);   // ★ 再绑定新的
+                UnsubscribeNodeEvents(_boundVm?.SpacetimeNodes); // 先解绑旧的
+                SubscribeNodeEvents(_boundVm?.SpacetimeNodes);   // 再绑定新的
                 RenderSpacetimeFlow();
             }
             else if (e.PropertyName == nameof(VirtualMachinesPageViewModel.SelectedSpacetimeNode))
@@ -657,7 +682,7 @@ namespace ExHyperV.Views
 
             Point currentPos = e.GetPosition(this);
 
-            // 关键守卫：如果没有有效的上一帧位置（说明 MouseDown 没触发就来了 Move），
+            // 守卫：没有有效的上一帧位置（MouseDown 没触发就来了 Move）时，
             // 当前帧不动作，只记录位置，等下一帧用真实位移
             if (!_hasLastPos)
             {
@@ -703,7 +728,7 @@ namespace ExHyperV.Views
         {
             bool wasDragging = _isDragging;
             _isDragging = false;
-            _hasLastPos = false;   // ← 关键：松开就清掉，下次必须重新 MouseDown 才能拖
+            _hasLastPos = false;   // 松开清掉，下次须重新 MouseDown 才能拖
 
             if (CanvasContainer.IsMouseCaptured)
             {

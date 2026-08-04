@@ -2,19 +2,14 @@
 using System.Management;
 using ExHyperV.Tools;
 using ExHyperV.Models;
-using ExHyperV.Properties;
 
 namespace ExHyperV.Services
 {
-    public class VmCreateService
+    public static class VmCreateService
     {
-        private readonly VmStorageService _storage = new();
-        private readonly VmNetworkService _network = new();
-        private readonly VmPowerService _power = new();
-
         private const string ServiceWql = "SELECT * FROM Msvm_VirtualSystemManagementService";
 
-        public async Task<List<string>> GetSupportedVersionsAsync()
+        public static async Task<List<string>> GetSupportedVersionsAsync()
         {
             var capsResp = await WmiApi.QueryFirstAsync(
                 "SELECT * FROM Msvm_VirtualSystemManagementCapabilities",
@@ -41,7 +36,7 @@ namespace ExHyperV.Services
 
         private sealed record IsolationItem(string InstanceID, bool IsolationEnabled, int IsolationType);
 
-        public async Task<(bool Supported, List<string> Types)> GetIsolationSupportAsync()
+        public static async Task<(bool Supported, List<string> Types)> GetIsolationSupportAsync()
         {
             var capsResp = await WmiApi.QueryFirstAsync(
                 "SELECT * FROM Msvm_VirtualSystemManagementCapabilities",
@@ -83,13 +78,16 @@ namespace ExHyperV.Services
 
             return (true, isolationTypes);
         }
-        public async Task<(string DefaultVmPath, string DefaultVhdPath)> GetHostDefaultPathsAsync()
+        public static async Task<(string DefaultVmPath, string DefaultVhdPath)> GetHostDefaultPathsAsync()
         {
+            // 26100 起 DefaultVirtualMachinePath 已空，改用 DefaultExternalDataRoot（实测 = Get-VMHost.VirtualMachinePath）；旧 build 回退老属性
             var resp = await WmiApi.QueryFirstAsync(
-                "SELECT DefaultVirtualMachinePath, DefaultVirtualHardDiskPath FROM Msvm_VirtualSystemManagementServiceSettingData",
+                "SELECT * FROM Msvm_VirtualSystemManagementServiceSettingData",
                 obj => (
-                    VmPath: obj["DefaultVirtualMachinePath"]?.ToString() ?? @"C:\ProgramData\Microsoft\Windows\Hyper-V",
-                    VhdPath: obj["DefaultVirtualHardDiskPath"]?.ToString() ?? ""
+                    VmPath: obj.TryGetString("DefaultExternalDataRoot")
+                            ?? obj.TryGetString("DefaultVirtualMachinePath")
+                            ?? @"C:\ProgramData\Microsoft\Windows\Hyper-V",
+                    VhdPath: obj.TryGetString("DefaultVirtualHardDiskPath") ?? ""
                 ),
                 WmiScope.HyperV);
 
@@ -99,9 +97,12 @@ namespace ExHyperV.Services
             return (@"C:\ProgramData\Microsoft\Windows\Hyper-V", "");
         }
 
-        public async Task<(bool Success, string Message)> CreateVirtualMachineAsync(VmCreationParams p)
+        public static async Task<(bool Success, string Message)> CreateVirtualMachineAsync(VmCreationParams p)
         {
-            string finalVmName = p.IsManualName ? p.Name : await GetUniqueVmNameAsync(p.Name, p.Path);
+            // 总是查重(含手动命名)：撞到已存在的文件夹 / 在册同名 VM 时自动改名 "test3 (2)"…，
+            // 避开 DefineSystem/建 VHD 的 ERROR_FILE_EXISTS(0x80070050)。用户预期：同名也应自动改名而非报错。
+            string finalVmName = await GetUniqueVmNameAsync(p.Name, p.Path);
+            bool vmCreated = false;   // DefineSystem 成功后置 true;失败回滚的依据
             try
             {
                 // ── Step 1: 创建目录 ──────────────────────────────
@@ -109,8 +110,15 @@ namespace ExHyperV.Services
                 if (!Directory.Exists(vmHomeFolder))
                     Directory.CreateDirectory(vmHomeFolder);
 
+                // 新建磁盘：VhdPath 存的是文件夹（手选目录，或默认的 VM 目录），vhdx 文件名恒取最终 VM 名。
+                // 批量创建时各台名字不同 → 盘文件各自唯一，无需另行区分。
                 if (p.DiskMode == 0)
-                    p.VhdPath = Path.Combine(vmHomeFolder, $"{finalVmName}.vhdx");
+                {
+                    string diskFolder = p.IsDiskPathManual && !string.IsNullOrWhiteSpace(p.VhdPath)
+                        ? p.VhdPath
+                        : vmHomeFolder;
+                    p.VhdPath = Path.Combine(diskFolder, $"{finalVmName}.vhdx");
+                }
 
                 // ── Step 2: DefineSystem 创建 VM ──────────────────
                 using var svcForScope = WmiApi.GetVirtualSystemManagementService();
@@ -129,6 +137,9 @@ namespace ExHyperV.Services
                 vssd["ConfigurationDataRoot"] = Path.Combine(p.Path, finalVmName);
                 vssd["SnapshotDataRoot"] = Path.Combine(p.Path, finalVmName);
                 vssd["SwapFileDataRoot"] = Path.Combine(p.Path, finalVmName);
+
+                // 新建即默认启动时 NumLock 开（Gen2 默认关，会致控制台连上把宿主 NumLock 带掉）；TrySetAlways 内置 HasProperty 守卫，防个别 build 无此属性
+                vssd.TrySetAlways("BIOSNumLock", true);
 
                 if (p.Generation == 2 && p.IsolationType != "Disabled" &&
                     !string.IsNullOrEmpty(p.IsolationType))
@@ -152,9 +163,13 @@ namespace ExHyperV.Services
                 if (!defineResp.Success)
                     return (false, defineResp.Error);
 
+                // DefineSystem 已成功，VM 此刻可能/已在 Hyper-V 中创建——此后任一步骤(含下面取路径/GUID)失败都
+                // 必须走 catch 回滚删除，避免留孤儿半成品。故标志位提前到这里、后续失败一律 throw 而非 return。
+                vmCreated = true;
+
                 string? vmPath = defineResp.Data?.FirstOrDefault();
                 if (string.IsNullOrEmpty(vmPath))
-                    return (false, Resources.Error_VmCreate_NoSystemPath);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoSystemPath);
 
                 // ── Step 3: 取新 VM 的 Name（GUID）───────────────
                 string vmGuid;
@@ -165,12 +180,13 @@ namespace ExHyperV.Services
                 }
 
                 if (string.IsNullOrEmpty(vmGuid))
-                    return (false, Resources.Error_VmCreate_NoGuid);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoGuid);
 
                 // ── Step 4: 处理器设置 ────────────────────────────
                 var procSettings = new VmProcessorSettings { Count = p.ProcessorCount };
-                var procService = new VmProcessorService();
-                await procService.SetVmProcessorAsync(finalVmName, procSettings);
+                var procResult = await VmProcessorService.SetVmProcessorAsync(finalVmName, procSettings);
+                if (!procResult.Success)
+                    throw new InvalidOperationException(procResult.Message);
 
                 // ── Step 5: 内存设置 ──────────────────────────────
                 var memSettings = new VmMemorySettings
@@ -179,40 +195,51 @@ namespace ExHyperV.Services
                     DynamicMemoryEnabled = p.EnableDynamicMemory,
                     Minimum = p.EnableDynamicMemory ? p.MemoryMb / 2 : p.MemoryMb,
                     Maximum = p.EnableDynamicMemory ? p.MemoryMb * 4 : p.MemoryMb,
+                    Buffer = 20,
+                    Priority = 50
                 };
-                var memService = new VmMemoryService();
-                await memService.SetVmMemorySettingsAsync(finalVmName, memSettings, false);
+                var memResult = await VmMemoryService.SetVmMemorySettingsAsync(finalVmName, memSettings, false);
+                if (!memResult.Success)
+                    throw new InvalidOperationException(memResult.Message);
 
                 // ── Step 6: 网卡 ──────────────────────────────────
-                await _network.AddNetworkAdapterAsync(finalVmName);
+                var addNicResult = await VmNetworkService.AddNetworkAdapterAsync(finalVmName);
+                if (!addNicResult.Success)
+                    throw new InvalidOperationException(addNicResult.Message);
                 if (!string.IsNullOrWhiteSpace(p.SwitchName) &&
-                    p.SwitchName != ExHyperV.Properties.Resources.Common_None)
+                    p.SwitchName != Properties.Resources.Common_None)
                 {
-                    var adapters = await _network.GetNetworkAdaptersAsync(finalVmName);
+                    var adapters = await VmNetworkService.GetNetworkAdaptersAsync(finalVmName);
                     var adapter = adapters.FirstOrDefault();
                     if (adapter != null)
                     {
                         adapter.IsConnected = true;
                         adapter.SwitchName = p.SwitchName;
-                        await _network.UpdateConnectionAsync(finalVmName, adapter);
+                        var connResult = await VmNetworkService.UpdateConnectionAsync(finalVmName, adapter);
+                        if (!connResult.Success)
+                            throw new InvalidOperationException(connResult.Message);
                     }
                 }
 
                 // ── Step 7: 磁盘 ──────────────────────────────────
                 if (p.DiskMode == 0)
                 {
-                    await _storage.AddDriveAsync(
+                    var diskResult = await VmStorageService.AddDriveAsync(
                         finalVmName,
                         p.Generation == 2 ? "SCSI" : "IDE", 0, 0,
                         "HardDisk", p.VhdPath, false,
                         isNew: true, sizeGb: (int)p.DiskSizeGb);
+                    if (!diskResult.Success)
+                        throw new InvalidOperationException(diskResult.Message);
                 }
                 else if (p.DiskMode == 1 && !string.IsNullOrEmpty(p.VhdPath))
                 {
-                    await _storage.AddDriveAsync(
+                    var diskResult = await VmStorageService.AddDriveAsync(
                         finalVmName,
                         p.Generation == 2 ? "SCSI" : "IDE", 0, 0,
                         "HardDisk", p.VhdPath, false);
+                    if (!diskResult.Success)
+                        throw new InvalidOperationException(diskResult.Message);
                 }
 
                 // ── Step 8: DVD ───────────────────────────────────
@@ -222,9 +249,11 @@ namespace ExHyperV.Services
                     int dvdCtrlNum = p.Generation == 1 ? 1 : 0;
                     int dvdLoc = p.Generation == 1 ? 0 : 1;
 
-                    await _storage.AddDriveAsync(
+                    var dvdResult = await VmStorageService.AddDriveAsync(
                         finalVmName, dvdCtrl, dvdCtrlNum, dvdLoc,
                         "DvdDrive", p.IsoPath, false);
+                    if (!dvdResult.Success)
+                        throw new InvalidOperationException(dvdResult.Message);
                 }
 
                 // ── Step 9: Gen2 安全启动 ─────────────────────────
@@ -252,14 +281,39 @@ namespace ExHyperV.Services
                     await EnableTpmAsync(finalVmName, vmGuid, svcForScope.Scope);
                 }
 
-                // ── Step 11: 启动 ─────────────────────────────────
-                if (p.StartAfterCreation)
-                    await _power.ExecuteControlActionAsync(finalVmName, "Start");
+                // ── Step 11: ISO 优先引导 ─────────────────────────
+                // 带安装介质时把光盘引导项提到引导首位(Gen1/Gen2 通用)，避免默认网络(PXE)优先
+                // 导致首次开机空等/落到空盘。须在此(VM 已配置完、Step 8~10 设置不再覆盖引导序、
+                // 且调用方启动 VM 之前)设置才能在首次开机生效。复用 VmBootService；尽力而为：
+                // 其内部已吞异常不会抛出，故不会触发上面的建机回滚，失败也仅影响首启顺序。
+                if (!string.IsNullOrWhiteSpace(p.IsoPath) && File.Exists(p.IsoPath))
+                {
+                    await VmBootService.SetIsoFirstAsync(finalVmName);
+                }
 
+                // 启动交由调用方(ConfirmCreateAsync)处理：创建已成功，启动作为独立后续步骤，
+                // 由 UI 检查引擎返回并在失败(如内存不足)时弹出原因——在此 await 而不看结果会静默吞掉失败。
                 return (true, finalVmName);
             }
             catch (Exception ex)
             {
+                // 回滚:DefineSystem 之后任一步骤失败会留下半成品 VM,删掉它再上报错误(回滚失败不掩盖原始错误)
+                if (vmCreated)
+                {
+                    try
+                    {
+                        var rollback = await VmDeleteService.DeleteVmAsync(finalVmName);
+                        if (!rollback.Success)
+                            return (false, ex.Message + Environment.NewLine +
+                                string.Format(Properties.Resources.Error_VmCreate_RollbackFailed, finalVmName, rollback.Message));
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        // 回滚删除也失败：孤儿半成品 VM 残留，明确告知用户手动清理，同时保留原始错误
+                        return (false, ex.Message + Environment.NewLine +
+                            string.Format(Properties.Resources.Error_VmCreate_RollbackFailed, finalVmName, rollbackEx.Message));
+                    }
+                }
                 return (false, ex.Message);
             }
         }
@@ -271,12 +325,29 @@ namespace ExHyperV.Services
         //   3. Msvm_SecurityService.SetKeyProtector（传入 SecuritySettingData XML + RawData）
         //   4. Msvm_SecuritySettingData: TpmEnabled=true, EncryptStateAndVmMigrationTraffic=true
         //      → Msvm_SecurityService.ModifySecuritySettings
-        private async Task EnableTpmAsync(string vmName, string vmGuid, ManagementScope hyperVScope)
+        private static async Task EnableTpmAsync(string vmName, string vmGuid, ManagementScope hyperVScope)
         {
             await Task.Run(() =>
             {
                 const string hgsScope = @"root\microsoft\windows\hgs";
                 var hgsMs = WmiConnectionCache.GetManagementScope(hgsScope, WmiContext.Local);
+
+                // 异步 Job 等待（~2 分钟超时，替代原 while(true) 防挂死）
+                void WaitJob(string? jobPath)
+                {
+                    if (string.IsNullOrEmpty(jobPath)) return;
+                    using var job = new ManagementObject(hyperVScope, new ManagementPath(jobPath), null);
+                    for (int i = 0; i < 400; i++)
+                    {
+                        job.Get();
+                        ushort state = (ushort)job["JobState"];
+                        if (state == 7) return;
+                        if (state > 7)
+                            throw new InvalidOperationException(string.Format(Properties.Resources.Error_VmCreate_TpmJobFail, state));
+                        System.Threading.Thread.Sleep(300);
+                    }
+                    throw new InvalidOperationException(string.Format(Properties.Resources.Error_VmCreate_TpmJobFail, 0));
+                }
 
                 // Step 1: 取或创建 UntrustedGuardian
                 using var guardianSearcher = new ManagementObjectSearcher(
@@ -296,7 +367,7 @@ namespace ExHyperV.Services
                 }
 
                 if (guardian == null)
-                    throw new InvalidOperationException(Resources.Error_VmCreate_NoGuardian);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoGuardian);
 
                 // Step 2: 生成本地 KeyProtector
                 using var kpClass = new ManagementClass(
@@ -309,7 +380,7 @@ namespace ExHyperV.Services
                 byte[]? rawData = kpInstance?["RawData"] as byte[];
 
                 if (rawData == null || rawData.Length == 0)
-                    throw new InvalidOperationException(Resources.Error_VmCreate_NoKeyProtector);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoKeyProtector);
 
                 // Step 3: 取 Msvm_SecuritySettingData，序列化为 XML
                 using var secSettingSearcher = new ManagementObjectSearcher(
@@ -319,7 +390,7 @@ namespace ExHyperV.Services
                 using var secSetting = secSettingCol.Cast<ManagementObject>().FirstOrDefault();
 
                 if (secSetting == null)
-                    throw new InvalidOperationException(Resources.Error_VmCreate_NoSecuritySettings);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoSecuritySettings);
 
                 string secXml = secSetting.GetText(TextFormat.CimDtd20);
 
@@ -330,15 +401,16 @@ namespace ExHyperV.Services
                 using var secSvc = secSvcCol.Cast<ManagementObject>().FirstOrDefault();
 
                 if (secSvc == null)
-                    throw new InvalidOperationException(Resources.Error_VmCreate_NoSecurityService);
+                    throw new InvalidOperationException(Properties.Resources.Error_VmCreate_NoSecurityService);
 
                 using var kpInParams = secSvc.GetMethodParameters("SetKeyProtector");
                 kpInParams["SecuritySettingData"] = secXml;
                 kpInParams["KeyProtector"] = rawData;
                 using var kpOut = secSvc.InvokeMethod("SetKeyProtector", kpInParams, null);
                 int kpRet = Convert.ToInt32(kpOut["ReturnValue"]);
-                if (kpRet != 0)
-                    throw new InvalidOperationException(string.Format(Resources.Error_VmCreate_SetKeyProtectorFail, kpRet));
+                if (kpRet == 4096) WaitJob(kpOut["Job"]?.ToString());
+                else if (kpRet != 0)
+                    throw new InvalidOperationException(string.Format(Properties.Resources.Error_VmCreate_SetKeyProtectorFail, kpRet));
 
                 // Step 5: TpmEnabled=true + EncryptStateAndVmMigrationTraffic=true
                 secSetting["TpmEnabled"] = true;
@@ -349,29 +421,47 @@ namespace ExHyperV.Services
                 modInParams["SecuritySettingData"] = updatedXml;
                 using var modOut = secSvc.InvokeMethod("ModifySecuritySettings", modInParams, null);
                 int modRet = Convert.ToInt32(modOut["ReturnValue"]);
-                if (modRet != 0 && modRet != 4096)
-                    throw new InvalidOperationException(string.Format(Resources.Error_VmCreate_ModifySecuritySettingsFail, modRet));
-
-                if (modRet == 4096)
-                {
-                    string jobPath = modOut["Job"]?.ToString() ?? "";
-                    if (!string.IsNullOrEmpty(jobPath))
-                    {
-                        using var job = new ManagementObject(hyperVScope, new ManagementPath(jobPath), null);
-                        while (true)
-                        {
-                            job.Get();
-                            ushort state = (ushort)job["JobState"];
-                            if (state == 7) break;
-                            if (state > 7)
-                                throw new InvalidOperationException(string.Format(Resources.Error_VmCreate_TpmJobFail, state));
-                            System.Threading.Thread.Sleep(300);
-                        }
-                    }
-                }
+                if (modRet == 4096) WaitJob(modOut["Job"]?.ToString());
+                else if (modRet != 0)
+                    throw new InvalidOperationException(string.Format(Properties.Resources.Error_VmCreate_ModifySecuritySettingsFail, modRet));
             });
         }
-        private async Task<string> GetUniqueVmNameAsync(string baseName, string basePath)
+        // 批量命名：base-NN（补零位数按数量：5→1 位、100→3 位），起始序号接已有 base-<数字> 的最大值之后连续取 count 个。
+        // 在此算好互不冲突的最终名，各台再并行走 CreateVirtualMachineAsync 时 GetUniqueVmNameAsync 恰好都命中空位、不再改名。
+        public static async Task<List<string>> BuildBatchNamesAsync(string baseName, string basePath, int count)
+        {
+            string prefix = baseName + "-";
+            int IndexOf(string name)
+            {
+                if (name == null || !name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return -1;
+                return int.TryParse(name.Substring(prefix.Length), out int k) ? k : -1;
+            }
+
+            int maxIdx = 0;
+            // 在册 VM 名（不带 Caption 过滤——该属性在本地化系统上被翻译、等值匹配查不到）
+            var resp = await WmiApi.QueryAsync(
+                "SELECT ElementName FROM Msvm_ComputerSystem",
+                obj => obj["ElementName"]?.ToString() ?? string.Empty,
+                WmiScope.HyperV);
+            foreach (var n in resp.Data ?? new List<string>())
+                maxIdx = Math.Max(maxIdx, IndexOf(n));
+
+            // 目录名（防注册已删但文件夹残留占名）
+            try
+            {
+                if (Directory.Exists(basePath))
+                    foreach (var dir in Directory.EnumerateDirectories(basePath))
+                        maxIdx = Math.Max(maxIdx, IndexOf(Path.GetFileName(dir)));
+            }
+            catch { }
+
+            string fmt = "D" + count.ToString().Length;
+            return Enumerable.Range(maxIdx + 1, count)
+                .Select(i => $"{baseName}-{i.ToString(fmt)}")
+                .ToList();
+        }
+
+        private static async Task<string> GetUniqueVmNameAsync(string baseName, string basePath)
         {
             string candidate = baseName;
             int i = 2;
@@ -380,10 +470,10 @@ namespace ExHyperV.Services
             return candidate;
         }
 
-        private async Task<bool> VmNameExistsAsync(string name)
+        private static async Task<bool> VmNameExistsAsync(string name)
         {
             var resp = await WmiApi.QueryFirstAsync(
-                $"SELECT Name FROM Msvm_ComputerSystem WHERE ElementName = '{WmiApi.Escape(name)}' AND Caption = 'Virtual Machine'",
+                $"SELECT Name FROM Msvm_ComputerSystem WHERE ElementName = '{WmiApi.Escape(name)}'",
                 obj => obj["Name"]?.ToString(),
                 WmiScope.HyperV);
             return resp.HasData;

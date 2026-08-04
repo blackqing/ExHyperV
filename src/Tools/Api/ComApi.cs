@@ -6,18 +6,13 @@ namespace ExHyperV.Tools;
 
 // ══════════════════════════════════════════════════════════════════
 //  ComApi — 公开封装层
-//  所有 COM 对象调用的唯一入口
-//  ICS 操作必须在 STA 线程执行，ComApi 内部统一处理，调用方不感知
 // ══════════════════════════════════════════════════════════════════
 public static class ComApi
 {
     // ── ICS 网络共享 ──────────────────────────────────────────────
-    // 替换 NetworkService / Utils.UpdateSwitchConfigurationAsync 里
-    // 通过 PowerShell 调用 HNetCfg.HNetShare 的所有操作
 
     /// <summary>
     /// 禁用所有网络适配器上的 ICS 共享。
-    /// 等效于 PS 脚本里遍历所有连接并调用 DisableSharing()。
     /// </summary>
     public static ApiResponse DisableAllIcsSharing()
     {
@@ -39,7 +34,7 @@ public static class ComApi
     /// 为两个适配器启用 ICS（公共上游 + 私有下游）。
     /// publicAdapterName：共享上游的适配器显示名称（如物理网卡名）
     /// privateAdapterName：受保护网络一侧的适配器显示名称（如 vEthernet 名）
-    /// 调用前应先调用 DisableAllIcsSharing() 清除旧配置。
+    /// 旧配置的清除由内部在两个目标确认存在后执行，调用方无需(也不应)先全局清场。
     /// </summary>
     public static ApiResponse EnableIcsSharing(string publicAdapterName, string privateAdapterName)
     {
@@ -173,7 +168,8 @@ internal static class IcsCore
 
     /// <summary>
     /// 为指定的公共和私有适配器启用 ICS。
-    /// 调用前应已通过 DisableAll() 清除旧配置。
+    /// 先验证两个目标都存在再清场启用：目标缺失时立即失败且不动系统里任何现有共享
+    /// (ICS 全局仅一份，先清后验会在失败时白白关掉别的交换机的 NAT 且无法恢复)。
     /// </summary>
     public static void Enable(string publicAdapterName, string privateAdapterName)
     {
@@ -182,7 +178,9 @@ internal static class IcsCore
         {
             dynamic? publicConfig = null;
             dynamic? privateConfig = null;
+            var enabledOthers = new List<object>();
 
+            // 第一遍：只定位目标与已启用共享的连接，不做任何修改
             foreach (var conn in netShare.EnumEveryConnection)
             {
                 try
@@ -190,13 +188,11 @@ internal static class IcsCore
                     dynamic props = netShare.NetConnectionProps[conn];
                     dynamic cfg = netShare.INetSharingConfigurationForINetConnection[conn];
 
-                    // 先清除所有已有 ICS（防止重复配置）
-                    if ((bool)cfg.SharingEnabled)
-                        cfg.DisableSharing();
-
                     string name = (string)props.Name;
-                    if (name == publicAdapterName) publicConfig = cfg;
-                    if (name == privateAdapterName) privateConfig = cfg;
+                    bool isTarget = false;
+                    if (name == publicAdapterName) { publicConfig = cfg; isTarget = true; }
+                    if (name == privateAdapterName) { privateConfig = cfg; isTarget = true; }
+                    if (!isTarget && (bool)cfg.SharingEnabled) enabledOthers.Add(cfg);
                 }
                 catch (Exception ex)
                 {
@@ -209,8 +205,26 @@ internal static class IcsCore
             if (privateConfig == null)
                 throw new IcsException($"Private adapter not found: '{privateAdapterName}'");
 
+            // 第二遍：目标齐了才清旧共享（含目标自身的旧配置）
+            foreach (dynamic cfg in enabledOthers)
+            {
+                try { if ((bool)cfg.SharingEnabled) cfg.DisableSharing(); }
+                catch (Exception ex) { Debug.WriteLine($"[IcsCore.Enable] disable error: {ex.Message}"); }
+            }
+            if ((bool)publicConfig.SharingEnabled) publicConfig.DisableSharing();
+            if ((bool)privateConfig.SharingEnabled) privateConfig.DisableSharing();
+
             publicConfig.EnableSharing(Public);
-            privateConfig.EnableSharing(Private);
+            try
+            {
+                privateConfig.EnableSharing(Private);
+            }
+            catch
+            {
+                // 私有侧失败回滚公共侧：只剩公共侧的半套配置会骗过 GetSourceAdapter 的检测、赖到下次 NAT 操作
+                try { publicConfig.DisableSharing(); } catch { }
+                throw;
+            }
         }
         finally
         {

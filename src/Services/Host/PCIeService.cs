@@ -1,25 +1,81 @@
 ﻿using System.Diagnostics;
 using ExHyperV.Tools;
 using ExHyperV.Models;
-using ExHyperV.Properties;
 
 namespace ExHyperV.Services
 {
-    public enum MmioCheckResultType { Ok, NeedsConfirmation, Error }
+    public enum MmioCheckResultType { Ok, NeedsExpansion, Error }
 
-    public class PCIeService
+    /// <summary>存储控制器名下的一块物理磁盘（用于直通前判断系统盘/脱机）。</summary>
+    public readonly record struct ControllerDisk(int Number, string FriendlyName, bool IsSystem, bool IsBoot, bool IsOffline);
+
+    public static class PCIeService
     {
-        private const ulong RequiredMmioBytes = 64UL * 1024 * 1024 * 1024; // 64 GiB
-        private readonly VmPowerService _powerService = new();
+        // 主机标识：零宽空格（U+200B）前缀，使其永不与真实虚拟机名（哪怕真有虚拟机就叫“主机”）相等；
+        // 零宽空格不可见，界面仍显示为“主机”，故无需额外转换器。状态判别一律用它，不用裸的显示文案。
+        public static readonly string HostKey = ((char)0x200B).ToString() + Properties.Resources.Host;
 
-        private string GetPureId(string? instanceId)
+        private static string GetPureId(string? instanceId)
         {
             if (string.IsNullOrEmpty(instanceId)) return string.Empty;
             int idx = instanceId.IndexOf(@"\VEN_", StringComparison.OrdinalIgnoreCase);
             return idx >= 0 ? instanceId.Substring(idx) : instanceId;
         }
 
-        public async Task<(List<DeviceInfo> Devices, List<string> VmNames)> GetPCIeInfoAsync()
+        /// <summary>
+        /// 同卡键：把 LocationPath 末段 PCI(设备号+功能号) 的功能号清零，
+        /// 使同一物理多功能设备的各功能（如显卡 fn0 与板载声卡 fn1）归并到同一键。
+        /// 例："PCIROOT(0)#PCI(0600)#PCI(0001)" → "PCIROOT(0)#PCI(0600)#PCI(0000)"
+        /// </summary>
+        public static string CardKey(string? locationPath)
+        {
+            if (string.IsNullOrEmpty(locationPath)) return string.Empty;
+            return System.Text.RegularExpressions.Regex.Replace(
+                locationPath, @"#PCI\(([0-9A-Fa-f]{2})[0-9A-Fa-f]{2}\)$", "#PCI(${1}00)");
+        }
+
+        /// <summary>
+        /// 列出某 PCI 存储控制器名下的物理磁盘（用 Win32_DiskDrive.Parent == 控制器 InstanceId 映射，
+        /// 再从 MSFT_Disk 取系统/启动/在线状态）。供直通前判断:系统盘拒绝、在线数据盘先脱机。
+        /// </summary>
+        public static async Task<List<ControllerDisk>> GetControllerDisksAsync(string controllerInstanceId)
+        {
+            var result = new List<ControllerDisk>();
+            if (string.IsNullOrEmpty(controllerInstanceId)) return result;
+
+            // 1. 该控制器名下的磁盘号（磁盘 PnP 父级 == 控制器）
+            var ddResp = await WmiApi.QueryAsync(
+                "SELECT Index, PNPDeviceID FROM Win32_DiskDrive",
+                obj => new { Number = Convert.ToInt32(obj["Index"] ?? -1), Pnp = obj["PNPDeviceID"]?.ToString() ?? "" },
+                WmiScope.CimV2);
+            if (!ddResp.Success || ddResp.Data == null) return result;
+
+            var diskNumbers = new HashSet<int>();
+            foreach (var d in ddResp.Data)
+            {
+                if (d.Number < 0 || string.IsNullOrEmpty(d.Pnp)) continue;
+                if (string.Equals(Win32Api.GetDeviceParent(d.Pnp), controllerInstanceId, StringComparison.OrdinalIgnoreCase))
+                    diskNumbers.Add(d.Number);
+            }
+            if (diskNumbers.Count == 0) return result;
+
+            // 2. 这些磁盘的系统/启动/在线状态
+            var mdResp = await WmiApi.QueryCimAsync(
+                "SELECT Number, FriendlyName, IsSystem, IsBoot, IsOffline FROM MSFT_Disk",
+                obj => new ControllerDisk(
+                    Convert.ToInt32(obj["Number"] ?? -1),
+                    obj["FriendlyName"]?.ToString() ?? string.Empty,
+                    Convert.ToBoolean(obj["IsSystem"] ?? false),
+                    Convert.ToBoolean(obj["IsBoot"] ?? false),
+                    Convert.ToBoolean(obj["IsOffline"] ?? false)),
+                WmiScope.Storage);
+            if (mdResp.Success && mdResp.Data != null)
+                result.AddRange(mdResp.Data.Where(x => diskNumbers.Contains(x.Number)));
+
+            return result;
+        }
+
+        public static async Task<(List<DeviceInfo> Devices, List<string> VmNames)> GetPCIeInfoAsync()
         {
             var deviceList = new List<DeviceInfo>();
             var vmNameList = new List<string>();
@@ -80,6 +136,13 @@ namespace ExHyperV.Services
 
                     // ── 2. 枚举所有 PCI 设备（Win32Api，替换 Get-PnpDevice）──────────
                     var allPciDevices = await Task.Run(() => Win32Api.GetAllDevices());
+                    var childrenByParent = allPciDevices
+                        .Where(d => !string.IsNullOrWhiteSpace(d.ParentInstanceId))
+                        .GroupBy(d => d.ParentInstanceId, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.ToList(),
+                            StringComparer.OrdinalIgnoreCase);
 
                     // PCIP（已卸除）且不在 vmDeviceAssignments → 标为 removed
                     foreach (var d in allPciDevices.Where(d =>
@@ -87,7 +150,7 @@ namespace ExHyperV.Services
                     {
                         string pureId = GetPureId(d.InstanceId);
                         if (!string.IsNullOrEmpty(pureId) && !vmDeviceAssignments.ContainsKey(pureId))
-                            vmDeviceAssignments[pureId] = Resources.Status_Dismounted;
+                            vmDeviceAssignments[pureId] = Properties.Resources.Status_Dismounted;
                     }
 
                     // ── 3. 构建 DeviceInfo（只用 PCI\* 在线设备）────────
@@ -115,12 +178,50 @@ namespace ExHyperV.Services
                         }
                         else
                         {
-                            status = Resources.Host;
+                            status = HostKey;
                         }
 
                         string path = pciDev.FirstLocationPath ?? "";
                         string vendor = pciInfoProvider.GetVendorFromInstanceId(pciDev.InstanceId, pciDev.Class);
-                        deviceList.Add(new DeviceInfo(pciDev.FriendlyName, status, pciDev.Class, pciDev.InstanceId, path, vendor));
+                        string displayClassType = pciDev.Class;
+
+                        // System 类常被总线/复合设备驱动用于 PCIe 父节点，无法体现下层功能。
+                        // 只在界面中附加真实存在的非 PCI 后代类别；原始 ClassType、直通路径、
+                        // 名称、图标和排序均保持父设备本身。遇到另一个 PCI 节点即停止，
+                        // 避免把可独立分配的下游 PCIe 设备归入当前父设备。
+                        if (string.Equals(pciDev.Class, "System", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var childClasses = GetNonPciDescendants(pciDev.InstanceId, childrenByParent)
+                                .Where(d => string.Equals(d.Status, "OK", StringComparison.OrdinalIgnoreCase)
+                                    && !string.IsNullOrWhiteSpace(d.Class)
+                                    && !string.Equals(d.Class, pciDev.Class, StringComparison.OrdinalIgnoreCase))
+                                .Select(d => d.Class)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+
+                            if (childClasses.Count > 0)
+                            {
+                                string childClassList = string.Join(
+                                    Properties.Resources.Common_ClassListSeparator,
+                                    childClasses);
+                                displayClassType = string.Format(
+                                    Properties.Resources.PCIePage_ClassWithChildTypes,
+                                    pciDev.Class,
+                                    childClassList);
+                            }
+                        }
+
+                        deviceList.Add(new DeviceInfo
+                        {
+                            FriendlyName = pciDev.FriendlyName,
+                            Status = status,
+                            ClassType = pciDev.Class,
+                            DisplayClassType = displayClassType,
+                            InstanceId = pciDev.InstanceId,
+                            Path = path,
+                            Vendor = vendor
+                        });
                     }
 
                     // 按类型排序
@@ -135,21 +236,24 @@ namespace ExHyperV.Services
                                 name.Contains("显卡", StringComparison.OrdinalIgnoreCase) ||
                                 name.Contains("Graphics", StringComparison.OrdinalIgnoreCase))
                                 return 0;
+                            // NPU/AI 加速器：紧随显卡置于顶部，但不抢显卡的最前位（当前能直通、尚不可用）
+                            if (cls.Equals("ComputeAccelerator", StringComparison.OrdinalIgnoreCase))
+                                return 1;
                             if (name.Contains("Audio", StringComparison.OrdinalIgnoreCase) ||
                                 name.Contains("声音", StringComparison.OrdinalIgnoreCase) ||
                                 cls.Equals("Media", StringComparison.OrdinalIgnoreCase) ||
                                 cls.Equals("Sound", StringComparison.OrdinalIgnoreCase))
-                                return 1;
+                                return 2;
                             if (cls.Equals("Net", StringComparison.OrdinalIgnoreCase) ||
                                 cls.Equals("NetClient", StringComparison.OrdinalIgnoreCase))
-                                return 2;
-                            if (cls.Equals("USB", StringComparison.OrdinalIgnoreCase))
                                 return 3;
+                            if (cls.Equals("USB", StringComparison.OrdinalIgnoreCase))
+                                return 4;
                             if (cls.Equals("SCSIAdapter", StringComparison.OrdinalIgnoreCase) ||
                                 cls.Equals("HDC", StringComparison.OrdinalIgnoreCase) ||
                                 cls.Equals("DiskDrive", StringComparison.OrdinalIgnoreCase))
-                                return 4;
-                            return 5;
+                                return 5;
+                            return 6;
                         }
                         return GetOrder(a).CompareTo(GetOrder(b));
                     });
@@ -165,10 +269,43 @@ namespace ExHyperV.Services
             return (deviceList, vmNameList);
         }
 
-        public Task<bool> IsServerOperatingSystemAsync()
+        private static IEnumerable<PciDeviceInfo> GetNonPciDescendants(
+            string rootInstanceId,
+            IReadOnlyDictionary<string, List<PciDeviceInfo>> childrenByParent)
+        {
+            if (string.IsNullOrWhiteSpace(rootInstanceId)) yield break;
+
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                rootInstanceId
+            };
+            var pending = new Queue<string>();
+            pending.Enqueue(rootInstanceId);
+
+            while (pending.Count > 0)
+            {
+                string parentId = pending.Dequeue();
+                if (!childrenByParent.TryGetValue(parentId, out var children)) continue;
+
+                foreach (var child in children)
+                {
+                    if (!visited.Add(child.InstanceId)) continue;
+
+                    // 下一个 PCI/PCIP 节点拥有自己的直通边界，不属于当前父设备的逻辑功能。
+                    if (child.InstanceId.StartsWith("PCI\\", StringComparison.OrdinalIgnoreCase)
+                        || child.InstanceId.StartsWith("PCIP\\", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    yield return child;
+                    pending.Enqueue(child.InstanceId);
+                }
+            }
+        }
+
+        public static Task<bool> IsServerOperatingSystemAsync()
             => Task.FromResult(HyperVHostService.IsServerSystem());
 
-        public async Task<(MmioCheckResultType Result, string Message)> CheckMmioSpaceAsync(string vmName)
+        public static async Task<MmioCheckResultType> CheckMmioSpaceAsync(string vmName)
         {
             string escapedVmName = WmiApi.Escape(vmName);
             var resp = await WmiApi.QueryAsync(
@@ -178,41 +315,27 @@ namespace ExHyperV.Services
                 WmiScope.HyperV);
 
             if (!resp.Success || resp.Data == null || resp.Data.Count == 0)
-                return (MmioCheckResultType.Error, Properties.Resources.Error_CannotGetVmInfo);
+                return MmioCheckResultType.Error;
 
             try
             {
                 ulong highMmioGapSizeMb = Convert.ToUInt64(resp.Data[0]);
-                ulong currentMmioBytes = highMmioGapSizeMb * 1048576UL;
-                if (currentMmioBytes < RequiredMmioBytes)
-                {
-                    long currentMmioGB = (long)(currentMmioBytes / (1024 * 1024 * 1024));
-                    string message = string.Format(Properties.Resources.Warning_LowMmioSpace_ConfirmExpand, vmName, currentMmioGB);
-                    return (MmioCheckResultType.NeedsConfirmation, message);
-                }
-                return (MmioCheckResultType.Ok, Properties.Resources.Info_MmioSpaceSufficient);
+                // 阈值复用 GPU-PV 的 MMIO 计算（按宿主物理地址宽度）；读不到时回退默认 256G（同一常量）
+                ulong requiredMb = VmMmioService.ComputeMmioPlan()?.HighSizeMb ?? VmMmioService.DefaultHighSizeMb;
+                return highMmioGapSizeMb < requiredMb ? MmioCheckResultType.NeedsExpansion : MmioCheckResultType.Ok;
             }
-            catch (Exception ex) { return (MmioCheckResultType.Error, ex.Message); }
+            catch { return MmioCheckResultType.Error; }
         }
 
-        public async Task<bool> UpdateMmioSpaceAsync(string vmName)
+        public static async Task<bool> UpdateMmioSpaceAsync(string vmName)
         {
             if (!await EnsureVmStoppedAsync(vmName)) return false;
 
-            ulong requiredMb = RequiredMmioBytes / 1048576UL;
-            var setResult = await WmiApi.WithObjectAsync(
-                wql: $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
-                modifier: obj => obj["HighMmioGapSize"] = requiredMb,
-                submitMethod: "ModifySystemSettings",
-                submitParamName: "SystemSettings",
-                wrapInArray: false,
-                scope: WmiScope.HyperV,
-                serviceWql: "SELECT * FROM Msvm_VirtualSystemManagementService");
-
-            return setResult.Success;
+            // 复用 GPU-PV 的 MMIO 配置：base=上限/2、highSize=min(剩余,256GB)、low=3584MB
+            return await VmMmioService.ConfigureMmioAsync(vmName);
         }
 
-        public async Task<(bool Success, string? ErrorMessage)> ExecutePCIeOperationAsync(
+        public static async Task<(bool Success, string? ErrorMessage)> ExecutePCIeOperationAsync(
             string targetVmName, string currentVmName, string instanceId, string path,
             IProgress<string>? progress = null)
         {
@@ -221,15 +344,14 @@ namespace ExHyperV.Services
                 var operations = PCIeCommands(targetVmName, instanceId, path, currentVmName);
                 if (operations.Count == 0) return (true, null);
 
-                // 只有当操作列表中包含 SetGuestCache（cpucache）时才需要关机
-                // SetGuestCache 是唯一强制要求 VM Off 的 ModifySystemSettings 调用
-                // 如果该 VM 的 GuestControlledCacheTypes 已经是 true，PCIeCommands 不会加入此步骤
-                bool needsStop = operations.Any(op => op.Message == Resources.Action_EnableCpuCacheControl);
+                // 仅当操作含“必须 VM Off 才能改的静态设置”（目前是 SetGuestCache，即写合并缓存）时才关机；
+                // DDA 增删设备本身不要求关机。GuestControlledCacheTypes 已是 true 时 PCIeCommands 不会加该步。
+                bool needsStop = operations.Any(op => op.RequiresVmOff);
                 if (needsStop)
                 {
-                    progress?.Report(Resources.Msg_PCIe_ShuttingDownVm);
+                    progress?.Report(Properties.Resources.Msg_PCIe_ShuttingDownVm);
                     if (!await EnsureVmStoppedAsync(targetVmName))
-                        return (false, Resources.Error_PCIe_CannotShutdownVm);
+                        return (false, Properties.Resources.Error_PCIe_CannotShutdownVm);
                 }
 
                 foreach (var operation in operations)
@@ -238,8 +360,7 @@ namespace ExHyperV.Services
                     var error = await ExecuteOperationAsync(operation, instanceId);
                     if (error != null)
                     {
-                        if (targetVmName == Resources.Host)
-                            Win32Api.EnablePnpDevice(instanceId);
+                        await RollbackToHostIfNeededAsync(targetVmName, currentVmName, instanceId, path);
                         return (false, error);
                     }
                 }
@@ -248,7 +369,22 @@ namespace ExHyperV.Services
             catch (Exception ex) { return (false, ex.Message); }
         }
 
-        private async Task<bool> EnsureVmStoppedAsync(string vmName)
+        // 失败回滚：仅当操作前设备在主机（主机→VM，即 currentVmName==HostKey），或目标就是主机（→主机方向）时，
+        // 把设备挂载并启用回主机，避免中途失败（尤其 Dismount 之后 AddDevice 失败）把设备卡在“已卸除”、
+        // 主机和虚拟机都访问不到。Mount 静默、Enable 幂等，任意一步失败都安全。
+        // VM→VM、卸除→VM 原始态非主机，保持“已卸除”（可手动再分配恢复），不强行拉回。
+        private static async Task RollbackToHostIfNeededAsync(string targetVmName, string currentVmName, string instanceId, string path)
+        {
+            if (currentVmName != HostKey && targetVmName != HostKey) return;
+            await WmiApi.InvokeAsync(
+                "SELECT * FROM Msvm_AssignableDeviceService",
+                "MountAssignableDevice",
+                p => p["DeviceLocationPath"] = path,
+                WmiScope.HyperV);
+            Win32Api.EnablePnpDevice(instanceId);
+        }
+
+        private static async Task<bool> EnsureVmStoppedAsync(string vmName)
         {
             string escapedVmName = WmiApi.Escape(vmName);
 
@@ -257,10 +393,12 @@ namespace ExHyperV.Services
                 obj => Convert.ToUInt16(obj["EnabledState"]),
                 WmiScope.HyperV);
 
-            if (!stateResp.Success || stateResp.Data == null) return false;
-            if (!stateResp.Data.Any(s => s == 2)) return true; // 已关机，无需操作
+            if (!stateResp.Success || stateResp.Data == null || stateResp.Data.Count == 0) return false;
+            // 仅 EnabledState==3（已关机）才算已停；已保存/已暂停等也不是 Off，后续改 MMIO/缓存仍会失败，需强制关机
+            if (stateResp.Data[0] == 3) return true;
 
-            await _powerService.ExecuteControlActionAsync(vmName, "Stop");
+            // 直通重分配无需 guest 优雅关机，直接强制关机（对齐 GPU-PV 路径），避免软关机被接受却卡住直到超时
+            await VmPowerService.ExecuteControlActionAsync(vmName, "TurnOff");
 
             // 等待关机完成（最多30秒）
             for (int i = 0; i < 30; i++)
@@ -281,9 +419,10 @@ namespace ExHyperV.Services
         private record PCIeOperation(
             string Message,
             PCIeOpType Type,
-            Func<Task<ApiResponse>>? WmiAction = null);
+            Func<Task<ApiResponse>>? WmiAction = null,
+            bool RequiresVmOff = false);   // true=该步必须 VM Off（目前仅 SetGuestCache），据此决定执行前是否先关机
 
-        private async Task<string?> ExecuteOperationAsync(PCIeOperation op, string instanceId)
+        private static async Task<string?> ExecuteOperationAsync(PCIeOperation op, string instanceId)
         {
             switch (op.Type)
             {
@@ -313,14 +452,14 @@ namespace ExHyperV.Services
             }
         }
 
-        private List<PCIeOperation> PCIeCommands(string Vmname, string instanceId, string path, string Nowname)
+        private static List<PCIeOperation> PCIeCommands(string Vmname, string instanceId, string path, string Nowname)
         {
             var ops = new List<PCIeOperation>();
 
             // WMI：Mount-VMHostAssignableDevice
             // WmiSilent：某些设备（核显/NPU 等）不支持标准 Mount 流程，失败静默处理
             PCIeOperation MountDeviceSilent(string locationPath) => new(
-                Resources.Status_MountingDevice, PCIeOpType.WmiSilent,
+                Properties.Resources.Status_MountingDevice, PCIeOpType.WmiSilent,
                 WmiAction: () => WmiApi.InvokeAsync(
                     "SELECT * FROM Msvm_AssignableDeviceService",
                     "MountAssignableDevice",
@@ -330,7 +469,7 @@ namespace ExHyperV.Services
             // WMI：Add-VMAssignableDevice
             // 流程：拿 PciExpress Default 模板 → 设置 HostResource = PCIP 设备路径 → AddResourceSettings
             PCIeOperation AddDevice(string devInstanceId, string locationPath, string vmName) => new(
-                Resources.Status_MountingDevice, PCIeOpType.Wmi,
+                Properties.Resources.Status_MountingDevice, PCIeOpType.Wmi,
                 WmiAction: async () =>
                 {
                     var ms = WmiConnectionCache.GetManagementScope(WmiScope.HyperV, WmiContext.Local);
@@ -344,15 +483,22 @@ namespace ExHyperV.Services
                     if (template is null) return ApiResponse.Fail("Cannot find PciExpress Default template");
 
                     // 2. 拿 PCIP 设备的 WMI 路径（用 LocationPath 查询）
+                    // 刚 Dismount 完，可分配设备注册可能滞后，重试几次避免偶发查不到（取出 __PATH 字符串即可，不留 COM 对象）
                     string escapedLocationPath = WmiApi.Escape(locationPath);
-                    using var pcipSearcher = new System.Management.ManagementObjectSearcher(ms,
-                        new System.Management.ObjectQuery(
-                            $"SELECT * FROM Msvm_PciExpress WHERE LocationPath='{escapedLocationPath}'"));
-                    using var pcipCol = pcipSearcher.Get();
-                    using var pcipDevice = pcipCol.Cast<System.Management.ManagementObject>().FirstOrDefault();
-                    if (pcipDevice is null) return ApiResponse.Fail($"Cannot find PciExpress device at: {locationPath}");
+                    string? pcipPath = null;
+                    for (int attempt = 0; attempt < 5 && string.IsNullOrEmpty(pcipPath); attempt++)
+                    {
+                        if (attempt > 0) await Task.Delay(500);
+                        using var pcipSearcher = new System.Management.ManagementObjectSearcher(ms,
+                            new System.Management.ObjectQuery(
+                                $"SELECT * FROM Msvm_PciExpress WHERE LocationPath='{escapedLocationPath}'"));
+                        using var pcipCol = pcipSearcher.Get();
+                        using var pcipDevice = pcipCol.Cast<System.Management.ManagementObject>().FirstOrDefault();
+                        pcipPath = pcipDevice?["__PATH"]?.ToString();
+                    }
+                    if (string.IsNullOrEmpty(pcipPath)) return ApiResponse.Fail($"Cannot find PciExpress device at: {locationPath}");
 
-                    template["HostResource"] = new string[] { pcipDevice["__PATH"]?.ToString() ?? "" };
+                    template["HostResource"] = new string[] { pcipPath };
 
                     // 3. 拿 VM VirtualSystemSettingData 路径
                     string escapedVmName = WmiApi.Escape(vmName);
@@ -376,7 +522,7 @@ namespace ExHyperV.Services
 
             // WMI：Dismount-VMHostAssignableDevice
             PCIeOperation DismountDevice(string devInstanceId, string locationPath) => new(
-                Resources.Dismountdevice, PCIeOpType.Wmi,
+                Properties.Resources.Dismountdevice, PCIeOpType.Wmi,
                 WmiAction: () => WmiApi.InvokeAsync(
                     "SELECT * FROM Msvm_AssignableDeviceService",
                     "DismountAssignableDevice",
@@ -395,7 +541,7 @@ namespace ExHyperV.Services
             // WMI：Remove-VMAssignableDevice
             // 流程：从 VM 的 Msvm_PciExpressSettingData 找到对应 HostResource 的设备设置 → RemoveResourceSettings
             PCIeOperation RemoveDevice(string devInstanceId, string locationPath, string vmName) => new(
-                Resources.Dismountdevice, PCIeOpType.Wmi,
+                Properties.Resources.Dismountdevice, PCIeOpType.Wmi,
                 WmiAction: async () =>
                 {
                     var ms = WmiConnectionCache.GetManagementScope(WmiScope.HyperV, WmiContext.Local);
@@ -446,7 +592,7 @@ namespace ExHyperV.Services
             // WMI：Set-VM -AutomaticStopAction TurnOff（AutomaticShutdownAction=2）
             // 注意：AutomaticShutdownAction 可在 VM 运行时修改，无需关机
             PCIeOperation SetAutoStop(string vmName) => new(
-                Resources.PCIeService_SetShutdownToTurnOff, PCIeOpType.Wmi,
+                Properties.Resources.PCIeService_SetShutdownToTurnOff, PCIeOpType.Wmi,
                 WmiAction: () => WmiApi.WithObjectAsync(
                     $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
                     obj => obj["AutomaticShutdownAction"] = (ushort)2,
@@ -459,7 +605,7 @@ namespace ExHyperV.Services
             // WMI：Set-VM -GuestControlledCacheTypes $true
             // 注意：此字段修改需要 VM 处于 Off 状态
             PCIeOperation SetGuestCache(string vmName) => new(
-                Resources.Action_EnableCpuCacheControl, PCIeOpType.Wmi,
+                Properties.Resources.Action_EnableCpuCacheControl, PCIeOpType.Wmi,
                 WmiAction: () => WmiApi.WithObjectAsync(
                     $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
                     obj => obj["GuestControlledCacheTypes"] = true,
@@ -467,11 +613,12 @@ namespace ExHyperV.Services
                     submitParamName: "SystemSettings",
                     wrapInArray: false,
                     scope: WmiScope.HyperV,
-                    serviceWql: "SELECT * FROM Msvm_VirtualSystemManagementService"));
+                    serviceWql: "SELECT * FROM Msvm_VirtualSystemManagementService"),
+                RequiresVmOff: true);   // 写合并缓存是静态设置，必须 VM Off 才能改
 
             // ── 检查 GuestControlledCacheTypes 是否已设置，已设置则跳过（同时避免关机）──
             bool guestCacheAlreadySet = false;
-            if (Vmname != Resources.Host)
+            if (Vmname != HostKey)
             {
                 string escapedVm = WmiApi.Escape(Vmname);
                 var cacheResp = WmiApi.QueryAsync(
@@ -482,39 +629,39 @@ namespace ExHyperV.Services
                 guestCacheAlreadySet = cacheResp.Success && (cacheResp.Data?.Any(x => x) ?? false);
             }
 
-            if (Nowname == Resources.Status_Dismounted && Vmname == Resources.Host)
+            if (Nowname == Properties.Resources.Status_Dismounted && Vmname == HostKey)
             {
                 // 已卸除 → 主机：Mount 静默处理，某些设备（核显/NPU）不支持标准 Mount 但实际可用
                 ops.Add(MountDeviceSilent(path));
-                ops.Add(new(Resources.Status_EnablingDevice, PCIeOpType.PnpEnable));
+                ops.Add(new(Properties.Resources.Status_EnablingDevice, PCIeOpType.PnpEnable));
             }
-            else if (Nowname == Resources.Status_Dismounted && Vmname != Resources.Host)
+            else if (Nowname == Properties.Resources.Status_Dismounted && Vmname != HostKey)
             {
                 ops.Add(SetAutoStop(Vmname));
                 if (!guestCacheAlreadySet) ops.Add(SetGuestCache(Vmname));
                 ops.Add(AddDevice(instanceId, path, Vmname));
             }
-            else if (Nowname == Resources.Host)
+            else if (Nowname == HostKey)
             {
                 ops.Add(SetAutoStop(Vmname));
                 if (!guestCacheAlreadySet) ops.Add(SetGuestCache(Vmname));
-                ops.Add(new(Resources.Disabledevice, PCIeOpType.PnpDisable));
+                ops.Add(new(Properties.Resources.Disabledevice, PCIeOpType.PnpDisable));
                 ops.Add(DismountDevice(instanceId, path));
                 ops.Add(AddDevice(instanceId, path, Vmname));
             }
-            else if (Vmname != Resources.Host && Nowname != Resources.Host)
+            else if (Vmname != HostKey && Nowname != HostKey)
             {
                 ops.Add(SetAutoStop(Vmname));
                 if (!guestCacheAlreadySet) ops.Add(SetGuestCache(Vmname));
                 ops.Add(RemoveDevice(instanceId, path, Nowname));
                 ops.Add(AddDevice(instanceId, path, Vmname));
             }
-            else if (Vmname == Resources.Host && Nowname != Resources.Host)
+            else if (Vmname == HostKey && Nowname != HostKey)
             {
                 // VM → 主机：Mount 静默处理，对齐 PS 版本行为
                 ops.Add(RemoveDevice(instanceId, path, Nowname));
                 ops.Add(MountDeviceSilent(path));
-                ops.Add(new(Resources.Status_EnablingDevice, PCIeOpType.PnpEnable));
+                ops.Add(new(Properties.Resources.Status_EnablingDevice, PCIeOpType.PnpEnable));
             }
 
             return ops;

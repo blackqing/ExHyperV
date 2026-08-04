@@ -36,11 +36,26 @@ public static class Win32Api
             ? NativeMethods.CM_Enable_DevNode(devInst, 0)
             : NativeMethods.CM_Disable_DevNode(devInst, NativeMethods.CM_DISABLE_UI_NOT_OK);
 
-        return cr == NativeMethods.CR_SUCCESS
-            ? ApiResponse.Ok()
-            : ApiResponse.Fail(
-                $"{(enable ? "CM_Enable_DevNode" : "CM_Disable_DevNode")} failed for '{instanceId}'",
-                cr, ApiErrorSource.Win32);
+        if (cr == NativeMethods.CR_SUCCESS)
+            return ApiResponse.Ok();
+
+        // 设备本身不可禁用（USB4 主机路由器、板载老式 PCI 设备等）→ 无法从主机分离直通。
+        // 给出「不支持」提示，而非裸 CM_Disable_DevNode 失败名。
+        if (!enable && cr == NativeMethods.CR_NOT_DISABLEABLE)
+            return ApiResponse.Fail(Properties.Resources.Error_DeviceNotAssignable, cr, ApiErrorSource.Win32);
+
+        return ApiResponse.Fail(
+            $"{(enable ? "CM_Enable_DevNode" : "CM_Disable_DevNode")} failed for '{instanceId}'",
+            cr, ApiErrorSource.Win32);
+    }
+
+    /// <summary>取设备的父设备 InstanceId（DEVPKEY_Device_Parent）。取不到返回空串。</summary>
+    public static string GetDeviceParent(string instanceId)
+    {
+        if (string.IsNullOrWhiteSpace(instanceId)) return string.Empty;
+        if (NativeMethods.CM_Locate_DevNode(out uint devInst, instanceId, NativeMethods.CM_LOCATE_DEVNODE_PHANTOM) != NativeMethods.CR_SUCCESS)
+            return string.Empty;
+        return GetDevNodeStringProperty(devInst, instanceId, new Guid("4340A6C5-93FA-4706-972C-7B648008A5A7"), 8); // DEVPKEY_Device_Parent
     }
 
     // ── PnP 设备枚举 ─────────────────────────────────────────────
@@ -61,14 +76,18 @@ public static class Win32Api
             using var searcher = new System.Management.ManagementObjectSearcher(
                 @"root\cimv2",
                 "SELECT DeviceID, Name, PNPClass, Service FROM Win32_PnPEntity");
-            foreach (System.Management.ManagementObject obj in searcher.Get())
+            using var collection = searcher.Get();
+            foreach (System.Management.ManagementObject obj in collection)
             {
-                string devId = obj["DeviceID"]?.ToString() ?? "";
-                if (string.IsNullOrEmpty(devId)) continue;
-                pnpEntityMap[devId] = (
-                    obj["Name"]?.ToString() ?? "",
-                    obj["PNPClass"]?.ToString() ?? "",
-                    obj["Service"]?.ToString() ?? "");
+                using (obj)
+                {
+                    string devId = obj["DeviceID"]?.ToString() ?? "";
+                    if (string.IsNullOrEmpty(devId)) continue;
+                    pnpEntityMap[devId] = (
+                        obj["Name"]?.ToString() ?? "",
+                        obj["PNPClass"]?.ToString() ?? "",
+                        obj["Service"]?.ToString() ?? "");
+                }
             }
         }
         catch (Exception ex)
@@ -78,17 +97,7 @@ public static class Win32Api
         Debug.WriteLine($"[Win32Api.GetAllDevices] Win32_PnPEntity: {pnpEntityMap.Count} ({sw.ElapsedMilliseconds}ms)");
 
         // 2. CM_Get_Device_ID_List：FILTER_NONE 枚举所有设备（含分配给VM的Unknown设备）
-        var allIds = new List<string>();
-        uint bufferLen = 0;
-        int cr = NativeMethods.CM_Get_Device_ID_List_Size(
-            out bufferLen, null, NativeMethods.CM_GETIDLIST_FILTER_NONE);
-        if (cr == NativeMethods.CR_SUCCESS && bufferLen > 0)
-        {
-            char[] buf = new char[bufferLen];
-            cr = NativeMethods.CM_Get_Device_ID_List(null, buf, bufferLen, NativeMethods.CM_GETIDLIST_FILTER_NONE);
-            if (cr == NativeMethods.CR_SUCCESS)
-                allIds = ParseMultiString(buf);
-        }
+        var allIds = GetDeviceIdList(NativeMethods.CM_GETIDLIST_FILTER_NONE);
         Debug.WriteLine($"[Win32Api.GetAllDevices] CM all devices: {allIds.Count} ({sw.ElapsedMilliseconds}ms)");
 
         // 3. 并行查每个设备属性
@@ -123,6 +132,8 @@ public static class Win32Api
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 9);  // DEVPKEY_Device_Class
             string service = GetDevNodeStringProperty(devInst, instanceId,
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 6);  // DEVPKEY_Device_Service
+            string parentInstanceId = GetDevNodeStringProperty(devInst, instanceId,
+                new Guid("4340A6C5-93FA-4706-972C-7B648008A5A7"), 8);  // DEVPKEY_Device_Parent
             // cfgmgr32 拿不到时 fallback Win32_PnPEntity
             if (string.IsNullOrEmpty(friendlyName) && pnpEntityMap.TryGetValue(instanceId, out var entityInfo))
             {
@@ -141,6 +152,7 @@ public static class Win32Api
                 FriendlyName = friendlyName,
                 Class = pnpClass,
                 Service = service,
+                ParentInstanceId = parentInstanceId,
                 Status = status,
                 LocationPaths = locationPaths
             };
@@ -148,6 +160,47 @@ public static class Win32Api
 
         Debug.WriteLine($"[Win32Api.GetAllDevices] Done. {results.Count} ({sw.ElapsedMilliseconds}ms)");
         return results;
+    }
+
+    /// <summary>
+    /// 枚举"在位"(present)的显示类 GPU：Name / 完整 InstanceId / 厂商 / 驱动版本。
+    /// </summary>
+    public static List<(string InstanceId, string Name, string Manufacturer, string DriverVersion)> GetPresentDisplayAdapters()
+    {
+        var result = new List<(string, string, string, string)>();
+        var ids = GetDeviceIdList(NativeMethods.CM_GETIDLIST_FILTER_PRESENT);
+
+        var common = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"); // DEVPKEY_Device_* 公共 fmtid
+        foreach (var instanceId in ids)
+        {
+            string u = instanceId.ToUpperInvariant();
+            if (!u.StartsWith("PCI\\") && !u.Contains("ACPI")) continue;
+            if (NativeMethods.CM_Locate_DevNode(out uint devInst, instanceId, NativeMethods.CM_LOCATE_DEVNODE_NORMAL) != NativeMethods.CR_SUCCESS) continue;
+            if (GetDevNodeStringProperty(devInst, instanceId, common, 9) != "Display") continue;          // Class
+            string name = GetDevNodeStringProperty(devInst, instanceId, common, 14);                       // FriendlyName
+            if (string.IsNullOrEmpty(name)) name = GetDevNodeStringProperty(devInst, instanceId, common, 2); // DeviceDesc
+            string manu = GetDevNodeStringProperty(devInst, instanceId, common, 13);                       // Manufacturer
+            string driverVersion = GetDevNodeStringProperty(devInst, instanceId,
+                new Guid("A8B865DD-2E3D-4094-AD97-E593A70C75D6"), 3);                                      // DEVPKEY_Device_DriverVersion
+            result.Add((instanceId, name, manu, driverVersion));
+        }
+        return result;
+    }
+
+    // CM_Get_Device_ID_List 两步式枚举在"取大小"与"取列表"之间存在竞态：空隙中设备树膨胀会返回
+    // CR_BUFFER_SMALL——本应用的 DDA 操作本身就触发设备重枚举，故按微软推荐循环重试而非放弃返回空。
+    private static List<string> GetDeviceIdList(uint filterFlags)
+    {
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            int cr = NativeMethods.CM_Get_Device_ID_List_Size(out uint bufferLen, null, filterFlags);
+            if (cr != NativeMethods.CR_SUCCESS || bufferLen == 0) return new List<string>();
+            char[] buf = new char[bufferLen];
+            cr = NativeMethods.CM_Get_Device_ID_List(null, buf, bufferLen, filterFlags);
+            if (cr == NativeMethods.CR_SUCCESS) return ParseMultiString(buf);
+            if (cr != NativeMethods.CR_BUFFER_SMALL) return new List<string>();
+        }
+        return new List<string>();
     }
 
     // ── cfgmgr32 属性查询 ─────────────────────────────────────────
@@ -260,10 +313,12 @@ public static class Win32Api
         finally { NativeMethods.RegCloseKey(hKey); }
     }
 
+    // ERROR_ACCESS_DENIED(5) = 同一键已有挂起的替换任务(重启前二次替换被内核拒绝)，
+    // 不再并入成功——由调用方按 code==5 翻译为"挂起"语义。
     public static ApiResponse ReplaceHive(string subKeyName, string newHivePath, string backupPath)
     {
         int ret = NativeMethods.RegReplaceKey(NativeMethods.HKEY_LOCAL_MACHINE, subKeyName, newHivePath, backupPath);
-        return ret == 0 || ret == 5 ? ApiResponse.Ok() : ApiResponse.Fail("RegReplaceKey failed", ret, ApiErrorSource.Win32);
+        return ret == 0 ? ApiResponse.Ok() : ApiResponse.Fail("RegReplaceKey failed", ret, ApiErrorSource.Win32);
     }
 
     public static ApiResponse SetHiveStringValue(string subKeyName, string valueName, string value)
@@ -303,6 +358,7 @@ public class PciDeviceInfo
     public string FriendlyName { get; set; } = "";
     public string Class { get; set; } = "";
     public string Service { get; set; } = "";
+    public string ParentInstanceId { get; set; } = "";
     public string Status { get; set; } = "";
     public List<string> LocationPaths { get; set; } = new();
 
@@ -347,10 +403,12 @@ internal static class NativeMethods
     #region cfgmgr32
     public const int CR_SUCCESS = 0x00000000;
     public const int CR_BUFFER_SMALL = 0x0000001A;
+    public const int CR_NOT_DISABLEABLE = 0x00000028; // 设备不可禁用 
     public const uint CM_LOCATE_DEVNODE_NORMAL = 0x00000000;
     public const uint CM_LOCATE_DEVNODE_PHANTOM = 0x00000001;
-    public const uint CM_DISABLE_UI_NOT_OK = 0x00000002;
+    public const uint CM_DISABLE_UI_NOT_OK = 0x00000004;
     public const uint CM_GETIDLIST_FILTER_NONE = 0x00000000;
+    public const uint CM_GETIDLIST_FILTER_PRESENT = 0x00000100;
     public const uint CM_GETIDLIST_FILTER_ENUMERATOR = 0x00000002;
     public const uint DN_HAS_PROBLEM = 0x00000400;
 

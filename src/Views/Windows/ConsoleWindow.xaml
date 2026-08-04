@@ -6,19 +6,17 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     
     xmlns:converters="clr-namespace:ExHyperV.Converters"
-                 
-    xmlns:components="clr-namespace:ExHyperV.Views"
+    xmlns:tools="clr-namespace:ExHyperV.Tools"
     Title="{Binding VmName}"
-    MinWidth="550" 
-    MinHeight="340" 
+    MinWidth="600"
+    MinHeight="340"
+    Width="1100"
+    Height="820"
     WindowStartupLocation="CenterScreen"
     ExtendsContentIntoTitleBar="True"
     WindowBackdropType="Mica">
 
     <ui:FluentWindow.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-        <converters:FullScreenToStyleConverter x:Key="FullScreenToStyleConverter" />
-        <converters:FullScreenToStateConverter x:Key="FullScreenToStateConverter" />
     </ui:FluentWindow.Resources>
 
     <DockPanel LastChildFill="True" Background="Transparent">
@@ -27,9 +25,9 @@
             DockPanel.Dock="Top" 
             Height="42" 
             Padding="0"
-            Visibility="{Binding IsFullScreen, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Invert}">
+            Visibility="{Binding IsFullScreen, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}">
             <ui:TitleBar.Header>
-                <Grid Margin="12,0,0,0" HorizontalAlignment="Stretch">
+                <Grid Margin="12,0,0,0" HorizontalAlignment="Stretch"><!-- 不设 Background：空白区落到原生标题栏(NC)，由系统处理拖动/双击最大化 -->
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="{Binding VmName}"
            VerticalAlignment="Center"
@@ -37,24 +35,24 @@
            FontSize="12"
            FontWeight="SemiBold"
            MouseLeftButtonDown="OnHeaderMouseLeftButtonDown"
-           Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+           Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/><!-- 文字会接住鼠标 → 显式 DragMove 才能拖窗口（穿透在 ui:TitleBar 里拖不动，对齐 1.4.3） -->
 
                         <Grid VerticalAlignment="Center">
                             <!-- 启动按钮 -->
                             <ui:Button Icon="{ui:SymbolIcon Symbol=Play24}"
-                               Appearance="Transparent"
+                               Appearance="Transparent" Background="Transparent"
                                Width="60" 
                                Height="32"
                                Padding="0"
                                Command="{Binding StartVmCommand}"
                                ToolTip="{x:Static properties:Resources.ConsoleWindow_StartVm}"
-                               Visibility="{Binding IsRunning, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=Invert}"/>
+                               Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}"/>
 
                             <!-- 运行状态按钮组 -->
                             <StackPanel Orientation="Horizontal"
-                                Visibility="{Binding IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}">
                                 <ui:Button Icon="{ui:SymbolIcon Symbol=Power24}"
-                                   Appearance="Transparent"
+                                   Appearance="Transparent" Background="Transparent"
                                    Width="36"
                                    Height="32"
                                    Padding="0"
@@ -62,7 +60,7 @@
                                    Command="{Binding ShutdownVmCommand}"
                                    ToolTip="{x:Static properties:Resources.ConsoleWindow_ShutDown}" />
 
-                                <ui:DropDownButton Appearance="Transparent"
+                                <ui:DropDownButton Appearance="Transparent" Background="Transparent"
                                            Width="24"
                                            Height="32"
                                            Padding="0,0,8,0"
@@ -102,7 +100,7 @@
 
                         <ui:DropDownButton Content="{Binding SelectedResolution}" 
                                    Icon="{ui:SymbolIcon Symbol=Desktop24}" 
-                                   Appearance="Transparent" 
+                                   Appearance="Transparent" Background="Transparent" 
                                    FontSize="16" 
                                    Height="32"
                                    Padding="8,0" 
@@ -121,34 +119,59 @@
                             </ui:DropDownButton.Flyout>
                         </ui:DropDownButton>
 
-                        <ui:DropDownButton Content="{Binding SelectedSessionMode}" 
-                           Appearance="Transparent" 
-                           FontSize="11" 
+                        <!-- 缩放下拉：仅基本会话显示（增强会话画面原生跟随窗口、缩放无意义）。放大是拉伸、会糊。 -->
+                        <ui:DropDownButton Content="{Binding SelectedZoom}"
+                                   Icon="{ui:SymbolIcon Symbol=ZoomIn24}"
+                                   Appearance="Transparent" Background="Transparent"
+                                   FontSize="16"
+                                   Height="32"
+                                   Padding="8,0"
+                                   Margin="8,0,0,0"
+                                   ToolTip="{x:Static properties:Resources.ConsoleWindow_ZoomHint}"
+                                   Visibility="{Binding IsEnhancedMode, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}">
+                            <ui:DropDownButton.Flyout>
+                                <ContextMenu ItemsSource="{Binding ZoomOptions}">
+                                    <ContextMenu.ItemContainerStyle>
+                                        <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+                                            <Setter Property="Header" Value="{Binding}" />
+                                            <Setter Property="Command" Value="{Binding DataContext.ChangeZoomCommand, RelativeSource={RelativeSource AncestorType=ui:FluentWindow}}" />
+                                            <Setter Property="CommandParameter" Value="{Binding}" />
+                                        </Style>
+                                    </ContextMenu.ItemContainerStyle>
+                                </ContextMenu>
+                            </ui:DropDownButton.Flyout>
+                        </ui:DropDownButton>
+
+                        <ui:DropDownButton Content="{Binding SelectedSessionMode}"
+                           Appearance="Transparent" Background="Transparent" 
+                           FontSize="16"
                            Height="32"
                            Padding="8,0"
                            Margin="8,0,0,0">
                             <ui:DropDownButton.Flyout>
                                 <ContextMenu>
                                     <MenuItem Header="{x:Static properties:Resources.ConsoleViewModel_BasicSession}" Command="{Binding SwitchSessionModeCommand}" CommandParameter="{x:Static properties:Resources.ConsoleViewModel_BasicSession}" />
-                                    <MenuItem Header="{x:Static properties:Resources.ConsoleViewModel_EnhancedSession}" Command="{Binding SwitchSessionModeCommand}" CommandParameter="{x:Static properties:Resources.ConsoleViewModel_EnhancedSession}" />
+                                    <MenuItem Header="{x:Static properties:Resources.ConsoleViewModel_EnhancedSession}" Command="{Binding SwitchSessionModeCommand}" CommandParameter="{x:Static properties:Resources.ConsoleViewModel_EnhancedSession}" IsEnabled="{Binding IsEnhancedAvailable}" />
                                 </ContextMenu>
                             </ui:DropDownButton.Flyout>
                         </ui:DropDownButton>
 
-                        <ui:Button Appearance="Transparent" 
+                        <!-- CAD 按钮仅基本会话显示：增强会话是 RDP，SAS 无法程序化发送(系统 mstscax 拒绝)，与微软 VMConnect 一致 → 隐藏 -->
+                        <ui:Button Appearance="Transparent" Background="Transparent"
                                    Width="38"
                                    Height="32"
                                    Padding="0"
                                    Margin="8,0,0,0"
                                    Command="{Binding SendCadCommand}"
-                                   ToolTip="{x:Static properties:Resources.ConsoleWindow_SendCtrlAltDel}">
+                                   ToolTip="{x:Static properties:Resources.ConsoleWindow_SendCtrlAltDel}"
+                                   Visibility="{Binding IsEnhancedMode, Converter={StaticResource BoolToVis}, ConverterParameter=Invert}">
                             <ui:SymbolIcon Symbol="Keyboard24" FontSize="16" />
                         </ui:Button>
 
                         
                         <!-- 全屏切换按钮 -->
                         <ui:Button Icon="{ui:SymbolIcon Symbol=FullScreenMaximize24}"
-                                   Appearance="Transparent"
+                                   Appearance="Transparent" Background="Transparent"
                                    Height="32"
                                    Padding="8,0"
                                    Margin="8,0,0,0"
@@ -159,7 +182,9 @@
             </ui:TitleBar.Header>
         </ui:TitleBar>
 
-        <!-- 虚拟机画面容器 -->
-        <components:VmConsoleView x:Name="ConsoleHost" />
+        <!-- 虚拟机画面：通用 RDP 宿主缩到 VM 尺寸居中，周围 RdpArea 黑底。连接期间的遮挡由 RdpClientHost 内部黑布(WinForms 层)负责。 -->
+        <Grid x:Name="RdpArea" Background="#FF000000">
+            <tools:RdpClientHost x:Name="RdpHost" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        </Grid>
     </DockPanel>
 </ui:FluentWindow>

@@ -7,14 +7,15 @@ namespace ExHyperV.ViewModels
     public partial class AddSwitchViewModel : ObservableObject
     {
         private readonly IEnumerable<SwitchViewModel> _existingSwitches;
-        private readonly IEnumerable<PhysicalAdapterInfo> _allPhysicalAdapters;
+        private readonly IEnumerable<string> _allPhysicalAdapters;
+        private readonly IEnumerable<string> _bridgeableAdapters;
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNetworkAdapterSelectionEnabled))]
-        private string _selectedSwitchType = "External";
+        private SwitchMode _selectedSwitchType = SwitchMode.Bridge;
 
         [ObservableProperty]
-        private string _switchName = ExHyperV.Properties.Resources.AddSwitch_DefaultName_External;
+        private string _switchName = Properties.Resources.AddSwitch_DefaultName_External;
 
         [ObservableProperty]
         private string? _selectedNetworkAdapter;
@@ -23,37 +24,43 @@ namespace ExHyperV.ViewModels
         private string? _errorMessage;
 
         public ObservableCollection<string> AvailableNetworkAdapters { get; } = new();
-        public bool IsNetworkAdapterSelectionEnabled => _selectedSwitchType == "External" || _selectedSwitchType == "NAT";
-        public string ComboBoxPlaceholderText => AvailableNetworkAdapters.Any() ? ExHyperV.Properties.Resources.AddSwitch_Placeholder_SelectAdapter : ExHyperV.Properties.Resources.AddSwitch_Placeholder_NoAdaptersAvailable;
-
-        public bool IsComboBoxEnabled => IsNetworkAdapterSelectionEnabled && AvailableNetworkAdapters.Any();
+        public bool IsNetworkAdapterSelectionEnabled => SelectedSwitchType == SwitchMode.Bridge || SelectedSwitchType == SwitchMode.NAT;
 
 
-        public AddSwitchViewModel(IEnumerable<SwitchViewModel> existingSwitches, IEnumerable<PhysicalAdapterInfo> allPhysicalAdapters)
+        public AddSwitchViewModel(IEnumerable<SwitchViewModel> existingSwitches, IEnumerable<string> allPhysicalAdapters, IEnumerable<string> bridgeableAdapters)
         {
             _existingSwitches = existingSwitches;
             _allPhysicalAdapters = allPhysicalAdapters;
-
-            foreach (var adapter in _allPhysicalAdapters)
-            {
-                if (!_existingSwitches.Any(s => s.SelectedUpstreamAdapter == adapter.InterfaceDescription))
-                {
-                    AvailableNetworkAdapters.Add(adapter.InterfaceDescription);
-                }
-            }
-            OnPropertyChanged(nameof(ComboBoxPlaceholderText));
-            OnPropertyChanged(nameof(IsComboBoxEnabled));
+            _bridgeableAdapters = bridgeableAdapters;
+            RebuildAvailableAdapters();
         }
 
-        partial void OnSelectedSwitchTypeChanged(string value)
+        // 按交换机类型分源:外部/桥接只列可桥接网卡(蜂窝/WWAN 不可二层桥);NAT 列全部可上网物理网卡。
+        // 同时排除已被现有交换机占用的上游。
+        private void RebuildAvailableAdapters()
+        {
+            var source = SelectedSwitchType == SwitchMode.Bridge ? _bridgeableAdapters : _allPhysicalAdapters;
+            string? keep = SelectedNetworkAdapter;
+            AvailableNetworkAdapters.Clear();
+            foreach (var adapter in source)
+            {
+                if (!_existingSwitches.Any(s => s.SelectedUpstreamAdapter == adapter))
+                    AvailableNetworkAdapters.Add(adapter);
+            }
+            // 类型切换后,原选中项若已不在新列表里则清空
+            SelectedNetworkAdapter = (keep != null && AvailableNetworkAdapters.Contains(keep)) ? keep : null;
+        }
+
+        partial void OnSelectedSwitchTypeChanged(SwitchMode value)
         {
             SwitchName = value switch
             {
-                "External" => ExHyperV.Properties.Resources.AddSwitch_DefaultName_External,
-                "NAT" => ExHyperV.Properties.Resources.AddSwitch_DefaultName_NAT,
-                "Internal" => ExHyperV.Properties.Resources.AddSwitch_DefaultName_Internal,
-                _ => ExHyperV.Properties.Resources.AddSwitch_DefaultName_Generic
+                SwitchMode.Bridge => Properties.Resources.AddSwitch_DefaultName_External,
+                SwitchMode.NAT => Properties.Resources.AddSwitch_DefaultName_NAT,
+                SwitchMode.Isolated => Properties.Resources.AddSwitch_DefaultName_Internal,
+                _ => Properties.Resources.AddSwitch_DefaultName_Generic
             };
+            RebuildAvailableAdapters();   // 桥接↔NAT 切换时重建网卡列表(桥接排蜂窝)
         }
 
         public bool Validate()
@@ -61,7 +68,7 @@ namespace ExHyperV.ViewModels
             ErrorMessage = null;
             if (string.IsNullOrWhiteSpace(SwitchName))
             {
-                ErrorMessage = ExHyperV.Properties.Resources.AddSwitch_Validation_NameCannotBeEmpty;
+                ErrorMessage = Properties.Resources.AddSwitch_Validation_NameCannotBeEmpty;
                 return false;
             }
             if (_existingSwitches.Any(s => s.SwitchName.Equals(SwitchName, System.StringComparison.OrdinalIgnoreCase)))
@@ -71,19 +78,19 @@ namespace ExHyperV.ViewModels
             }
             if (IsNetworkAdapterSelectionEnabled && !AvailableNetworkAdapters.Any())
             {
-                ErrorMessage = ExHyperV.Properties.Resources.AddSwitch_Validation_NoAdaptersForExternalOrNat;
+                ErrorMessage = Properties.Resources.AddSwitch_Validation_NoAdaptersForExternalOrNat;
                 return false;
             }
             if (IsNetworkAdapterSelectionEnabled && string.IsNullOrEmpty(SelectedNetworkAdapter))
             {
-                ErrorMessage = ExHyperV.Properties.Resources.AddSwitch_Validation_AdapterRequiredForExternalOrNat;
+                ErrorMessage = Properties.Resources.AddSwitch_Validation_AdapterRequiredForExternalOrNat;
                 return false;
             }
-            if (_selectedSwitchType == "NAT")
+            if (SelectedSwitchType == SwitchMode.NAT)
             {
-                if (_existingSwitches.Any(s => !s.IsDefaultSwitch && s.SelectedNetworkMode == "NAT"))
+                if (_existingSwitches.Any(s => !s.IsDefaultSwitch && s.SelectedNetworkMode == SwitchMode.NAT))
                 {
-                    ErrorMessage = ExHyperV.Properties.Resources.AddSwitch_Validation_OnlyOneNatAllowed;
+                    ErrorMessage = Properties.Resources.AddSwitch_Validation_OnlyOneNatAllowed;
                     return false;
                 }
             }

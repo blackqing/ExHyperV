@@ -22,7 +22,7 @@ namespace ExHyperV.Services
         }
     }
 
-    public class SshService
+    public static class SshService
     {
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static ConnectionInfo CreateConnectionInfo(SshCredentials credentials, TimeSpan? timeout = null)
@@ -37,7 +37,7 @@ namespace ExHyperV.Services
             };
         }
 
-        public async Task<string> ExecuteSingleCommandAsync(SshCredentials credentials, string command, Action<string> logCallback, TimeSpan? commandTimeout = null)
+        public static async Task<string> ExecuteSingleCommandAsync(SshCredentials credentials, string command, Action<string> logCallback, TimeSpan? commandTimeout = null)
         {
             string commandToExecute = command;
 
@@ -51,7 +51,8 @@ namespace ExHyperV.Services
                 {
                     string actualCommand = command.Substring(5).Trim(); 
                     string escapedCommand = actualCommand.Replace("'", "'\\''");
-                    commandToExecute = $"echo '{credentials.Password}' | sudo -S -p '' bash -c '{escapedCommand}'";
+                    string escapedPassword = credentials.Password.Replace("'", "'\\''");
+                    commandToExecute = $"echo '{escapedPassword}' | sudo -S -p '' bash -c '{escapedCommand}'";
                 }
                 var sshCommand = client.CreateCommand(commandToExecute);
                 sshCommand.CommandTimeout = commandTimeout ?? TimeSpan.FromMinutes(30);
@@ -72,7 +73,7 @@ namespace ExHyperV.Services
             }
         }
 
-        public async Task<SshCommandResult> ExecuteCommandAndCaptureOutputAsync(SshCredentials credentials, string command, Action<string> logCallback, TimeSpan? commandTimeout = null)
+        public static async Task<SshCommandResult> ExecuteCommandAndCaptureOutputAsync(SshCredentials credentials, string command, Action<string> logCallback, TimeSpan? commandTimeout = null)
         {
             string commandToExecute = command;
             var outputBuilder = new StringBuilder();
@@ -93,7 +94,8 @@ namespace ExHyperV.Services
                 {
                     string actualCommand = command.Substring(5).Trim();
                     string escapedCommand = actualCommand.Replace("'", "'\\''");
-                    commandToExecute = $"echo '{credentials.Password}' | sudo -S -p '' bash -c '{escapedCommand}'";
+                    string escapedPassword = credentials.Password.Replace("'", "'\\''");
+                    commandToExecute = $"echo '{escapedPassword}' | sudo -S -p '' bash -c '{escapedCommand}'";
                 }
 
                 var sshCommand = client.CreateCommand(commandToExecute);
@@ -111,7 +113,7 @@ namespace ExHyperV.Services
             }
         }
         
-        private async Task ReadStreamAsync(Stream stream, Encoding encoding, Action<string> logCallback)
+        private static async Task ReadStreamAsync(Stream stream, Encoding encoding, Action<string> logCallback)
         {
             var buffer = new byte[1024];
             int bytesRead;
@@ -127,7 +129,7 @@ namespace ExHyperV.Services
             }
         }
 
-        public Task UploadFileAsync(SshCredentials credentials, string localPath, string remotePath)
+        public static Task UploadFileAsync(SshCredentials credentials, string localPath, string remotePath)
         {
             return Task.Run(() =>
             {
@@ -144,7 +146,7 @@ namespace ExHyperV.Services
                 }
             });
         }
-        public Task UploadDirectoryAsync(SshCredentials credentials, string localDirectory, string remoteDirectory)
+        public static Task UploadDirectoryAsync(SshCredentials credentials, string localDirectory, string remoteDirectory)
         {
             return Task.Run(() =>
             {
@@ -168,7 +170,7 @@ namespace ExHyperV.Services
                 }
             });
         }
-        private void UploadDirectoryRecursive(SftpClient sftp, DirectoryInfo localDirectory, string remoteDirectory)
+        private static void UploadDirectoryRecursive(SftpClient sftp, DirectoryInfo localDirectory, string remoteDirectory)
         {
             foreach (var file in localDirectory.GetFiles())
             {
@@ -200,7 +202,7 @@ namespace ExHyperV.Services
                 UploadDirectoryRecursive(sftp, subDir, remoteSubDir);
             }
         }
-        public Task WriteTextFileAsync(SshCredentials credentials, string content, string remotePath)
+        public static Task WriteTextFileAsync(SshCredentials credentials, string content, string remotePath)
         {
             return Task.Run(() =>
             {

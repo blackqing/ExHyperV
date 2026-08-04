@@ -153,7 +153,7 @@ public static class HcsApi
     }
 
     /// <summary>
-    /// 设置 CPU Group 的 CPU 占用上限（百分比 * 100，例如 5000 = 50%）。
+    /// 设置 CPU Group 的 CPU 占用上限。
     /// </summary>
     public static Task<ApiResponse> SetCpuGroupCapAsync(Guid groupId, ushort cpuCap)
     {
@@ -223,7 +223,7 @@ internal static class HcsCore
     [DllImport("ole32.dll")]
     private static extern void CoTaskMemFree(nint ptr);
 
-    // ── 核心通信方法 ──────────────────────────────────────────────
+    // ── 通信方法 ──────────────────────────────────────────────
 
     /// <summary>
     /// 向 HCS 发送修改指令（CreateGroup、DeleteGroup、SetProperty 等）。
@@ -298,8 +298,8 @@ internal static class HcsCore
 // ══════════════════════════════════════════════════════════════════
 public sealed class HcsException : Exception
 {
-    public new int HResult { get; }
-
+    // 直接写基类 HResult(setter 为 protected)：用 new 遮蔽会产生两份 HResult，
+    // catch(Exception) 读到的是从未赋值的基类默认码 0x80131500 而非真实错误码(实测确认)。
     public HcsException(string message, int hResult) : base(message)
     {
         HResult = hResult;

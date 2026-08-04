@@ -9,7 +9,8 @@ namespace ExHyperV.Tools
 
         private readonly Uri _pciResourceUri = new Uri("/assets/pci.ids", UriKind.Relative);
         private static readonly Regex VendorRegex = new Regex(@"^([0-9a-f]{4})\s+(.+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private Dictionary<string, string> _vendorDatabase;
+        // 字段处初始化:没调 EnsureInitializedAsync 就查也只是空表返回 Unknown,不 NRE
+        private Dictionary<string, string> _vendorDatabase = new();
         private bool _isInitialized = false;
 
         public PciIds() { }
@@ -24,7 +25,7 @@ namespace ExHyperV.Tools
 
             if (resourceInfo == null)
             {
-                throw new FileNotFoundException(ExHyperV.Properties.Resources.Error_EmbeddedWpfResourceNotFound, _pciResourceUri.ToString());
+                throw new FileNotFoundException(Properties.Resources.Error_EmbeddedWpfResourceNotFound, _pciResourceUri.ToString());
             }
 
             using (var stream = resourceInfo.Stream)

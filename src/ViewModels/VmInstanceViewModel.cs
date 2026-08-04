@@ -1,16 +1,15 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
-using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ExHyperV.Models;
 using ExHyperV.Services;
+using ExHyperV.Tools;
 
 namespace ExHyperV.ViewModels
 {
     /// <summary>
-    /// 虚拟机的 item-level ViewModel（替代旧的 ExHyperV.Models.VmInstanceInfo）。
     ///
     /// 设计：
     /// - 包装 <see cref="VmInstance"/> Model：构造时绑定，**生命期内 Model 引用不变**
@@ -56,6 +55,7 @@ namespace ExHyperV.ViewModels
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(ConfigSummary))]
         [NotifyPropertyChangedFor(nameof(CanChangeBootOrder))]
+        [NotifyPropertyChangedFor(nameof(CanToggleConsoleSupport))]
         private int _generation;
         partial void OnGenerationChanged(int value) { if (Model != null) Model.Generation = value; }
 
@@ -70,9 +70,17 @@ namespace ExHyperV.ViewModels
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(CanChangeBootOrder))]
+        [NotifyPropertyChangedFor(nameof(CanToggleConsoleSupport))]
+        [NotifyPropertyChangedFor(nameof(CanEditSecurity))]
         private bool _isRunning;
 
         public bool CanChangeBootOrder => !(Generation == 1 && IsRunning);
+
+        // 控制台支持开关仅适用于第 2 代虚拟机（Enable/Disable-VMConsoleSupport 官方仅 Gen2 可用），且需关机时改
+        public bool CanToggleConsoleSupport => Generation == 2 && !IsRunning;
+
+        // 安全启动 / vTPM 仅第 2 代可用，且需关机时改（与创建页的安全特性一致）
+        public bool CanEditSecurity => Generation == 2 && !IsRunning;
 
         [ObservableProperty] private BitmapSource? _thumbnail;
 
@@ -83,17 +91,7 @@ namespace ExHyperV.ViewModels
         partial void OnIpAddressChanged(string value)
         {
             if (Model != null) Model.IpAddress = value;
-
-            if (string.IsNullOrEmpty(value) || value == "---")
-            {
-                IpAddressDisplay = value;
-                return;
-            }
-            var ips = value.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-            var ipv4 = ips.FirstOrDefault(ip => ip.Contains(".") && !ip.Contains(":"));
-            IpAddressDisplay = !string.IsNullOrWhiteSpace(ipv4)
-                ? ipv4.Trim()
-                : (ips.FirstOrDefault()?.Trim() ?? value);
+            RecomputeIpAddressDisplay(value);
         }
 
         [ObservableProperty] private string _macAddress = "00:00:00:00:00:00";
@@ -101,10 +99,10 @@ namespace ExHyperV.ViewModels
 
         // ─── transient 状态机的内部锚点 ───────────────────────────
         private TimeSpan _anchorUptime;
-        public TimeSpan RawUptime => _anchorUptime;
         private DateTime _anchorLocalTime;
         private string? _transientState;
         private string? _backendState;
+        private ushort _backendCode;
 
 
         // ===== CPU / 内存 =====
@@ -130,6 +128,9 @@ namespace ExHyperV.ViewModels
         [ObservableProperty] private VmMemorySettings? _memorySettings;
         partial void OnMemorySettingsChanged(VmMemorySettings? value) { if (Model != null) Model.MemorySettings = value; }
 
+        [ObservableProperty] private VmMmioSettings? _mmioSettings;
+        partial void OnMmioSettingsChanged(VmMmioSettings? value) { if (Model != null) Model.MmioSettings = value; }
+
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(MemoryUsageString))]
         [NotifyPropertyChangedFor(nameof(MemoryLimitString))]
@@ -141,12 +142,6 @@ namespace ExHyperV.ViewModels
         private double _demandMemoryGb;
         partial void OnDemandMemoryGbChanged(double value) { if (Model != null) Model.DemandMemoryGb = value; }
 
-        [ObservableProperty] private int _availableMemoryPercent;
-        partial void OnAvailableMemoryPercentChanged(int value) { if (Model != null) Model.AvailableMemoryPercent = value; }
-
-        [ObservableProperty] private int _memoryPressure;
-        partial void OnMemoryPressureChanged(int value) { if (Model != null) Model.MemoryPressure = value; }
-
         [ObservableProperty] private PointCollection? _memoryHistoryPoints;
 
         private readonly LinkedList<double> _memoryUsageHistory = new();
@@ -155,7 +150,7 @@ namespace ExHyperV.ViewModels
 
         // ===== 存储 / 网络 / 启动顺序 / GPU 分配 — pass-through 到 Model 的 ObservableCollection =====
 
-        public ObservableCollection<VmDiskDetails> Disks => Model.Disks;
+        public ObservableCollection<VmDiskItem> Disks => Model.Disks;
         public ObservableCollection<VmStorageItem> StorageItems => Model.StorageItems;
         public ObservableCollection<VmNetworkAdapter> NetworkAdapters => Model.NetworkAdapters;
         public ObservableCollection<BootOrderItem> BootOrderItems => Model.BootOrderItems;
@@ -168,15 +163,6 @@ namespace ExHyperV.ViewModels
 
 
         // ===== GPU =====
-
-        [ObservableProperty] private string? _gpuVendor;
-        partial void OnGpuVendorChanged(string? value) { if (Model != null) Model.GpuVendor = value; }
-
-        [ObservableProperty] private string? _physicalGpuId;
-        partial void OnPhysicalGpuIdChanged(string? value) { if (Model != null) Model.PhysicalGpuId = value; }
-
-        [ObservableProperty] private string? _hostDriverVersion;
-        partial void OnHostDriverVersionChanged(string? value) { if (Model != null) Model.HostDriverVersion = value; }
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(HasGpu))]
@@ -216,19 +202,6 @@ namespace ExHyperV.ViewModels
 
         public bool HasGpu => (AssignedGpus != null && AssignedGpus.Count > 0) || !string.IsNullOrEmpty(GpuName);
 
-        // MMIO 地址空间配置
-        [ObservableProperty] private string? _lowMMIO;
-        partial void OnLowMMIOChanged(string? value) { if (Model != null) Model.LowMMIO = value; }
-
-        [ObservableProperty] private string? _highMMIO;
-        partial void OnHighMMIOChanged(string? value) { if (Model != null) Model.HighMMIO = value; }
-
-        [ObservableProperty] private string? _highMMIOBase;
-        partial void OnHighMMIOBaseChanged(string? value) { if (Model != null) Model.HighMMIOBase = value; }
-
-        [ObservableProperty] private string? _guestControlled;
-        partial void OnGuestControlledChanged(string? value) { if (Model != null) Model.GuestControlled = value; }
-
         // GPU 实时监控
         [ObservableProperty][NotifyPropertyChangedFor(nameof(GpuMaxUsage))] private double _gpu3dUsage;
         [ObservableProperty][NotifyPropertyChangedFor(nameof(GpuMaxUsage))] private double _gpuCopyUsage;
@@ -257,6 +230,10 @@ namespace ExHyperV.ViewModels
 
         public IAsyncRelayCommand<string>? ControlCommand { get; set; }
 
+        // 右键菜单电源项：运行中→关机（Stop，与主关机键一致：优雅关机失败则硬关），否则→启动。随 IsRunning 变化通知。
+        public string PowerToggleText => IsRunning ? Properties.Resources.Button_ShutDown : Properties.Resources.Button_Start;
+        public string PowerToggleAction => IsRunning ? "Stop" : "Start";
+
 
         // ===== 构造：从 Model 初始化 VM（Model 引用保留，集合通过 pass-through 共享） =====
 
@@ -272,33 +249,25 @@ namespace ExHyperV.ViewModels
             _generation = model.Generation;
             _version = model.Version;
             _osType = model.OsType;
-            _cpuCount = model.CpuCount;
-            _memoryGb = model.MemoryGb;
-            _assignedMemoryGb = model.AssignedMemoryGb;
-            _demandMemoryGb = model.DemandMemoryGb;
-            _availableMemoryPercent = model.AvailableMemoryPercent;
-            _memoryPressure = model.MemoryPressure;
+            CpuCount = model.CpuCount;
+            MemoryGb = model.MemoryGb;
+            AssignedMemoryGb = model.AssignedMemoryGb;
+            DemandMemoryGb = model.DemandMemoryGb;
             _totalDiskSizeGb = model.TotalDiskSizeGb;
             _ipAddress = model.IpAddress;
             _macAddress = model.MacAddress;
-            _gpuVendor = model.GpuVendor;
-            _physicalGpuId = model.PhysicalGpuId;
-            _hostDriverVersion = model.HostDriverVersion;
             _gpuName = model.GpuName;
-            _lowMMIO = model.LowMMIO;
-            _highMMIO = model.HighMMIO;
-            _highMMIOBase = model.HighMMIOBase;
-            _guestControlled = model.GuestControlled;
             _isGpuActive = model.IsGpuActive;
             _processor = model.Processor;
-            _memorySettings = model.MemorySettings;
+            MemorySettings = model.MemorySettings;
+            MmioSettings = model.MmioSettings;
 
             // ── IpAddressDisplay 派生（构造时跳过了 setter 钩子的 display 计算）──
             RecomputeIpAddressDisplay(_ipAddress);
 
             // ── GPU 历史队列初始化 + transient 状态推进 ──────────
             InitializeGpuHistory();
-            SyncBackendData(model.StateText, model.RawUptime);
+            SyncBackendData(model.StateText, model.StateCode, model.RawUptime);
 
             // ── Disks 集合变化时刷新总磁盘大小与 ConfigSummary ──
             Disks.CollectionChanged += (s, e) =>
@@ -362,7 +331,7 @@ namespace ExHyperV.ViewModels
             Notes = fresh.Notes;
 
             // ── 2. 推进 transient 状态机 ──────────────────────────
-            SyncBackendData(fresh.StateText, fresh.RawUptime);
+            SyncBackendData(fresh.StateText, fresh.StateCode, fresh.RawUptime);
 
             // ── 3. IP：未运行清回 "---"（运行时的 ARP 发现侧路在 PageVM）──
             if (!IsRunning) IpAddress = "---";
@@ -374,6 +343,11 @@ namespace ExHyperV.ViewModels
 
             // ── 5. 磁盘 in-place 合并（按 Path 匹配；运行中实时读真实文件大小）──
             ReconcileDisks(Disks, fresh.Disks, runningRefresh: IsRunning);
+
+            // 磁盘容量(MaxSize)可能在合并中变化(扩容/换盘)，而元素属性变化不触发集合事件——
+            // 这里重算总量，其 setter 经 NotifyPropertyChangedFor 带动 ConfigSummary 刷新(只靠增删的 CollectionChanged 会漏)
+            double freshTotalGb = Disks.Sum(d => d.MaxSize) / 1073741824.0;
+            if (Math.Abs(TotalDiskSizeGb - freshTotalGb) > 0.0001) TotalDiskSizeGb = freshTotalGb;
 
             // ── 6. GPU 摘要名 ─────────────────────────────────────
             GpuName = fresh.GpuName;
@@ -430,8 +404,8 @@ namespace ExHyperV.ViewModels
 
         // ─── 磁盘合并（lifted from VirtualMachinesPageViewModel.MonitorStateLoop）──
         private static void ReconcileDisks(
-            ObservableCollection<VmDiskDetails> currentList,
-            IEnumerable<VmDiskDetails> newList,
+            ObservableCollection<VmDiskItem> currentList,
+            IEnumerable<VmDiskItem> newList,
             bool runningRefresh)
         {
             if (newList == null) return;
@@ -479,27 +453,32 @@ namespace ExHyperV.ViewModels
 
         // ===== 业务逻辑方法（内存、GPU、状态推进、计时） =====
 
-        public string MemoryUsageString => _assignedMemoryGb.ToString("N1");
-        public string MemoryDemandString => _demandMemoryGb.ToString("N1");
+        public string MemoryUsageString => AssignedMemoryGb.ToString("N1");
+        public string MemoryDemandString => DemandMemoryGb.ToString("N1");
 
         public string MemoryLimitString
         {
             get
             {
-                if (_memorySettings != null)
+                if (MemorySettings != null)
                 {
-                    double limitMb = _memorySettings.DynamicMemoryEnabled ? _memorySettings.Maximum : _memorySettings.Startup;
+                    double limitMb = MemorySettings.DynamicMemoryEnabled ? MemorySettings.Maximum : MemorySettings.Startup;
                     return (limitMb / 1024.0).ToString("N1");
                 }
-                return _memoryGb > 0 ? _memoryGb.ToString("N1") : "0.0";
+                return MemoryGb > 0 ? MemoryGb.ToString("N1") : "0.0";
             }
         }
 
         public void UpdateMemoryStatus(long assignedMb, int availablePercent)
         {
-            if (!_isRunning || assignedMb == 0)
+            if (!IsRunning)
             {
                 AssignedMemoryGb = 0; DemandMemoryGb = 0; UpdateHistoryPoints(0); return;
+            }
+            if (assignedMb == 0)
+            {
+                // 运行中但 guest 没报告内存使用(静态内存 / 无集成服务，查不到 demand)——按满额(已分配全部)显示，而非 0
+                AssignedMemoryGb = MemoryGb; DemandMemoryGb = MemoryGb; UpdateHistoryPoints(100); return;
             }
             AssignedMemoryGb = assignedMb / 1024.0;
             double usedPercentage = (100 - availablePercent) / 100.0;
@@ -599,7 +578,7 @@ namespace ExHyperV.ViewModels
                         .OrderByDescending(g => g)
                         .Select(g => g >= 1 ? $"{g:0.#} GB" : $"{g * 1024:0} MB"));
                 }
-                return string.Format(Properties.Resources.Format_VmSummary, _cpuCount, _memoryGb, diskPart);
+                return string.Format(Properties.Resources.Format_VmSummary, CpuCount, MemoryGb, diskPart);
             }
         }
 
@@ -607,18 +586,20 @@ namespace ExHyperV.ViewModels
         // ===== transient 状态机：将 backend raw state（StateText）和 view 端 transient state（如 "Starting"） =====
         // 合成最终显示的 State；并由此推导 IsRunning
 
-        public void SyncBackendData(string realState, TimeSpan realUptime)
+        public void SyncBackendData(string realState, ushort realCode, TimeSpan realUptime)
         {
             bool wasRunning = this.IsRunning;
 
             _backendState = realState;
+            _backendCode = realCode;
             _anchorUptime = realUptime;
             _anchorLocalTime = DateTime.Now;
 
-            // 同步进 Model（StateText / RawUptime 是 Service 读取的字段）
+            // 同步进 Model（StateText / StateCode / RawUptime 是 Service 读取的字段）
             if (Model != null)
             {
                 Model.StateText = realState;
+                Model.StateCode = realCode;
                 Model.RawUptime = realUptime;
             }
 
@@ -628,14 +609,18 @@ namespace ExHyperV.ViewModels
             RefreshStateDisplay();
 
             if (wasRunning != this.IsRunning)
+            {
                 OnPropertyChanged(nameof(IsRunning));
+                OnPropertyChanged(nameof(PowerToggleText));
+                OnPropertyChanged(nameof(PowerToggleAction));
+            }
 
             TickUptime();
         }
 
         public void TickUptime()
         {
-            if (!_isRunning) { Uptime = "00:00:00"; return; }
+            if (!IsRunning) { Uptime = "00:00:00"; return; }
             var currentTotal = _anchorUptime + (DateTime.Now - _anchorLocalTime);
             Uptime = currentTotal.TotalDays >= 1
                 ? $"{(int)currentTotal.TotalDays}.{currentTotal.Hours:D2}:{currentTotal.Minutes:D2}:{currentTotal.Seconds:D2}"
@@ -645,11 +630,9 @@ namespace ExHyperV.ViewModels
         private void RefreshStateDisplay()
         {
             State = _transientState ?? _backendState ?? string.Empty;
-            IsRunning = !string.IsNullOrEmpty(State) && !new[] {
-                Properties.Resources.Status_Off, "Off",
-                Properties.Resources.Status_Suspended, "Paused",
-                Properties.Resources.Status_Saved, "Saved"
-            }.Contains(State);
+            // 乐观态期间(用户刚发起操作)一律视为活动；否则按后端原始状态码白名单判定，
+            // 避免"合并磁盘/未知/等待启动"等非运行态被误判为运行(原字符串黑名单只排除 Off/Paused/Saved，会漏)
+            IsRunning = _transientState != null || VmMapper.IsActiveState(_backendCode);
 
             if (!IsRunning)
             {
@@ -664,6 +647,12 @@ namespace ExHyperV.ViewModels
                 UpdateSingleGpuHistory(_gpuEncodeHistory, 0);
                 UpdateSingleGpuHistory(_gpuDecodeHistory, 0);
                 RefreshGpuPoints();
+
+                // 关机/暂停/保存：清掉运行时缓存的 guest IP——否则停留在网络页时不随状态清，要退出再进才清
+                // (只在有 IP 时清，避免每次轮询都重设空表触发刷新)
+                foreach (var nic in NetworkAdapters)
+                    if (nic.IpAddresses != null && nic.IpAddresses.Count > 0)
+                        nic.IpAddresses = new List<string>();
             }
         }
 

@@ -11,14 +11,9 @@
     xmlns:components="clr-namespace:ExHyperV.Views"
     Title="VirtualMachinesPage" mc:Ignorable="d" d:DesignHeight="750" d:DesignWidth="1100"
     tools:ParentScrollLock.LockParentScroll="True"
-    xmlns:i="http://schemas.microsoft.com/xaml/behaviors" 
     x:Name="RootPage">
 
     <Page.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
-        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
-        <converters:VmNameToIconConverter x:Key="VmNameToIconConverter" />
-        <converters:OsTypeToImageConverter x:Key="OsTypeToImageConverter" />
 
 
 
@@ -42,7 +37,7 @@
             </Grid>
         </DataTemplate>
 
-        <!-- [新增] 纯白/纯空模板：用于创建模式下的底层占位 -->
+        <!-- 纯白/纯空模板：用于创建模式下的底层占位 -->
         <DataTemplate x:Key="VmBlankTemplate">
             <Grid Background="Transparent"/>
         </DataTemplate>
@@ -58,26 +53,48 @@
                 
                 <Border.ContextMenu>
                     <ContextMenu>
+                        <!-- 多选电源：全部运行→关机，否则→启动。仅多选时显示。 -->
+                        <ui:MenuItem Header="{Binding PlacementTarget.Tag.MultiPowerToggleText, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+             Command="{Binding PlacementTarget.Tag.MultiPowerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+             Visibility="{Binding PlacementTarget.Tag.IsMultiSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}">
+                            <ui:MenuItem.Icon>
+                                <ui:SymbolIcon Symbol="Power24" />
+                            </ui:MenuItem.Icon>
+                        </ui:MenuItem>
+                        <Separator Visibility="{Binding PlacementTarget.Tag.IsMultiSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
+
+                        <!-- 启动/关机切换：运行中显示"关机"(Stop=优雅失败则硬关)，否则"启动"。多选时隐藏。 -->
+                        <ui:MenuItem Header="{Binding PowerToggleText}"
+             Command="{Binding ControlCommand}" CommandParameter="{Binding PowerToggleAction}"
+             Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}">
+                            <ui:MenuItem.Icon>
+                                <ui:SymbolIcon Symbol="Power24" />
+                            </ui:MenuItem.Icon>
+                        </ui:MenuItem>
+                        <Separator Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
+
                         <ui:MenuItem Header="{x:Static properties:Resources.VmPage_MenuOpenFolder}"
              Command="{Binding PlacementTarget.Tag.OpenVmFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-             CommandParameter="{Binding}">
+             CommandParameter="{Binding}"
+             Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}">
                             <ui:MenuItem.Icon>
                                 <ui:SymbolIcon Symbol="FolderOpen24" />
                             </ui:MenuItem.Icon>
                         </ui:MenuItem>
-                        <Separator/>
-                        
+                        <Separator Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
+
                         <!-- 重命名选项 -->
-                        <ui:MenuItem Header="{x:Static properties:Resources.Xaml_Rename}" 
+                        <ui:MenuItem Header="{x:Static properties:Resources.Xaml_Rename}"
                              Command="{Binding PlacementTarget.Tag.RenameVmCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                             CommandParameter="{Binding}">
+                             CommandParameter="{Binding}"
+                             Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}">
                             <ui:MenuItem.Icon>
                                 <ui:SymbolIcon Symbol="Rename24" />
                             </ui:MenuItem.Icon>
                         </ui:MenuItem>
 
-                        <Separator/>
-                        <ui:MenuItem Header="{x:Static properties:Resources.VmPage_ErrOptimizeFailed}"
+                        <Separator Visibility="{Binding PlacementTarget.Tag.IsSingleOrNoneSelect, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
+                        <ui:MenuItem Header="{x:Static properties:Resources.VmPage_PurgeBtn}"
              Command="{Binding PlacementTarget.Tag.PurgeVmCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
              CommandParameter="{Binding}"
              Foreground="{ui:ThemeResource SystemFillColorCriticalBrush}">
@@ -156,18 +173,20 @@
                                 <KeyBinding Key="Enter" Command="{Binding DataContext.CommitRenameCommand, ElementName=RootPage}" CommandParameter="{Binding}"/>
                                 <KeyBinding Key="Esc" Command="{Binding DataContext.CancelRenameCommand, ElementName=RootPage}" CommandParameter="{Binding}"/>
                             </ui:TextBox.InputBindings>
-                            <i:Interaction.Triggers>
-                                <i:EventTrigger EventName="LostFocus">
-                                    <i:InvokeCommandAction Command="{Binding DataContext.CommitRenameCommand, ElementName=RootPage}" CommandParameter="{Binding}"/>
-                                </i:EventTrigger>
-                            </i:Interaction.Triggers>
+                            <tools:EventToCommand.EventName>LostFocus</tools:EventToCommand.EventName>
+                            <tools:EventToCommand.Command>
+                                <Binding Path="DataContext.CommitRenameCommand" ElementName="RootPage"/>
+                            </tools:EventToCommand.Command>
+                            <tools:EventToCommand.CommandParameter>
+                                <Binding/>
+                            </tools:EventToCommand.CommandParameter>
                         </ui:TextBox>
                     </Grid>
                 </Grid>
             </Border>
         </DataTemplate>
         <DataTemplate x:Key="VmDetailTemplate">
-            <Grid x:Name="DetailRootGrid">
+            <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -204,8 +223,7 @@
                             </Image>
 
                             <!-- 2. 实时监视器 (运行时显示) -->
-                            <Border Background="Black" BorderBrush="{ui:ThemeResource CardStrokeColorDefaultBrush}" 
-                            BorderThickness="4,4,4,8" CornerRadius="2" ClipToBounds="True"
+                            <Border Background="#0B0B0B" CornerRadius="6" ClipToBounds="True"
                             ToolTip="{x:Static properties:Resources.Label_DoubleClickConnect}">
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -222,7 +240,7 @@
                                           Command="{Binding DataContext.OpenNativeConnectCommand, RelativeSource={RelativeSource AncestorType=Page}}" />
                                 </Border.InputBindings>
                                 <Viewbox Stretch="Uniform">
-                                    <Image Source="{Binding Thumbnail}" Width="320" Height="240" 
+                                    <Image Source="{Binding Thumbnail}"
                                    RenderOptions.BitmapScalingMode="HighQuality" />
                                 </Viewbox>
                             </Border>
@@ -249,7 +267,7 @@
                                            Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,16,0"/>
 
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <ui:Button Content="{x:Static properties:Resources.Label_Console}" Icon="Display24" Appearance="Secondary" 
+                                    <ui:Button Content="{x:Static properties:Resources.Label_Console}" Icon="Desktop24" Appearance="Secondary" 
                                                Padding="16,6" Height="36" Margin="0,0,8,0" CornerRadius="8"
                                                Command="{Binding DataContext.OpenNativeConnectCommand, RelativeSource={RelativeSource AncestorType=Page}}" />
                                     <Border CornerRadius="8" ClipToBounds="True">
@@ -288,7 +306,10 @@
                                                 <ui:Button Grid.Column="0" Content="{x:Static properties:Resources.Button_ShutDown}" Icon="Stop24" Appearance="Danger" Foreground="White"
            Padding="24,0" Height="36" CornerRadius="8,0,0,8" BorderThickness="0" Margin="0" VerticalContentAlignment="Center"
            Command="{Binding ControlCommand}" CommandParameter="Stop"/>
-                                                <ui:DropDownButton Grid.Column="1" Icon="ChevronDown24" Appearance="Danger" Foreground="White"
+                                                <ui:DropDownButton Grid.Column="1" Icon="ChevronDown24" Foreground="White"
+                   Background="{DynamicResource App.DangerBrush}"
+                   MouseOverBackground="{DynamicResource App.DangerBrushPointerOver}"
+                   PressedBackground="{DynamicResource App.DangerBrushPressed}"
                    Padding="6,0,10,0" Height="36" CornerRadius="0,8,8,0" BorderThickness="0" Margin="0" VerticalContentAlignment="Center">
                                                     <ui:DropDownButton.Flyout>
                                                         <ContextMenu>
@@ -373,7 +394,8 @@
                             <StackPanel Grid.Row="3" Orientation="Horizontal">
                                 <ComboBox VerticalAlignment="Center"
           ItemsSource="{Binding DataContext.AvailableOsTypes, Source={x:Reference RootPage}}"
-          SelectedItem="{Binding OsType, Mode=TwoWay}"
+          SelectedItem="{Binding OsType, Mode=OneWay}"
+          SelectionChanged="OnOsTypeSelectionChanged"
           MaxDropDownHeight="300"
           Padding="10,6,4,6">
                                     <ComboBox.ItemTemplate>
@@ -539,6 +561,33 @@
                                         </Setter.Value>
                                     </Setter>
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding DataContext.CurrentViewType, RelativeSource={RelativeSource AncestorType=Page}}" Value="Advanced">
+                                    <Setter Property="ContentTemplate">
+                                        <Setter.Value>
+                                            <DataTemplate>
+                                                <components:VmAdvancedSettingsView/>
+                                            </DataTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding DataContext.CurrentViewType, RelativeSource={RelativeSource AncestorType=Page}}" Value="Security">
+                                    <Setter Property="ContentTemplate">
+                                        <Setter.Value>
+                                            <DataTemplate>
+                                                <components:VmSecuritySettingsView/>
+                                            </DataTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding DataContext.CurrentViewType, RelativeSource={RelativeSource AncestorType=Page}}" Value="PcieSettings">
+                                    <Setter Property="ContentTemplate">
+                                        <Setter.Value>
+                                            <DataTemplate>
+                                                <components:VmPcieSettingsView/>
+                                            </DataTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </ContentControl.Style>
@@ -623,7 +672,9 @@
                     <!-- 请确保 ViewModel 中有对应的 Command -->
                 </Grid>
                 
-                <ui:ListView Grid.Row="1" ItemsSource="{Binding VmList}" SelectedItem="{Binding SelectedVm, Mode=TwoWay}" 
+                <ui:ListView Grid.Row="1" ItemsSource="{Binding VmList}" SelectedItem="{Binding SelectedVm, Mode=TwoWay}"
+                             SelectionChanged="VmList_SelectionChanged"
+                             IsEnabled="{Binding IsVmListEnabled}"
                              ItemTemplate="{StaticResource VmListItemTemplate}" Margin="4,0,4,4"/>
             </Grid>
         </Border>

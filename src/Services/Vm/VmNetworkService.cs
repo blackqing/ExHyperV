@@ -4,13 +4,15 @@ using System.Management;
 
 namespace ExHyperV.Services;
 
-public class VmNetworkService
+public static class VmNetworkService
 {
     private const string ServiceWql = "SELECT * FROM Msvm_VirtualSystemManagementService";
 
     // ── 查询 ──────────────────────────────────────────────────────
 
-    public async Task<List<VmNetworkAdapter>> GetNetworkAdaptersAsync(string vmName)
+    // 整体放进 Task.Run：await 后的续体(逐网卡 ASSOCIATORS 查询 searcher.Get)默认回 UI 线程，
+    // 被网络设置页在 UI 线程 await 调到、网卡一多就卡。挪线程池。
+    public static Task<List<VmNetworkAdapter>> GetNetworkAdaptersAsync(string vmName) => Task.Run(async () =>
     {
         var resultList = new List<VmNetworkAdapter>();
         if (string.IsNullOrEmpty(vmName)) return resultList;
@@ -27,13 +29,21 @@ public class VmNetworkService
             $"SELECT ElementName, InstanceID, Address, StaticMacAddress FROM Msvm_SyntheticEthernetPortSettingData WHERE InstanceID LIKE 'Microsoft:{vmGuid}%'",
             obj => (ManagementObject)obj);
 
+        // 旧版/模拟网卡（Gen1、旧系统在 Hyper-V 管理器里添加的"旧版网络适配器"）属独立的 Emulated 类，
+        // 与合成网卡分两张表——只查合成会完全漏掉它们（issue #216）。用 SELECT * 兼容其列差异，两类合并。
+        var emulatedPortsTask = WmiApi.QueryAsync(
+            $"SELECT * FROM Msvm_EmulatedEthernetPortSettingData WHERE InstanceID LIKE 'Microsoft:{vmGuid}%'",
+            obj => (ManagementObject)obj);
+
         var allocsTask = WmiApi.QueryAsync(
             $"SELECT EnabledState, InstanceID, HostResource FROM Msvm_EthernetPortAllocationSettingData WHERE InstanceID LIKE 'Microsoft:{vmGuid}%'",
             obj => (ManagementObject)obj);
 
-        await Task.WhenAll(portsTask, allocsTask);
+        await Task.WhenAll(portsTask, emulatedPortsTask, allocsTask);
 
-        var allPorts = portsTask.Result.Data ?? new List<ManagementObject>();
+        var allPorts = (portsTask.Result.Data ?? new List<ManagementObject>())
+            .Concat(emulatedPortsTask.Result.Data ?? new List<ManagementObject>())
+            .ToList();
         var allAllocs = allocsTask.Result.Data ?? new List<ManagementObject>();
 
         foreach (var port in allPorts)
@@ -43,8 +53,6 @@ public class VmNetworkService
 
             if (string.IsNullOrEmpty(fullPortId)) continue;
 
-            string deviceGuid = fullPortId.Split('\\').Last();
-
             var adapter = new VmNetworkAdapter
             {
                 Id = fullPortId,
@@ -53,8 +61,10 @@ public class VmNetworkService
                 IsStaticMac = port.TryGet<bool>("StaticMacAddress") ?? false
             };
 
+            // allocation 的 InstanceID = port + "\<段>"(实测:合成 port 2 段、旧版 3 段含 \0，allocation 都在其后再多一段)。
+            // 用前缀匹配，别再 Split.Last()+Contains——旧版 Split.Last() 取到的是 "0"、Contains 会乱匹配到别的网卡。
             var allocation = allAllocs.FirstOrDefault(a =>
-                a["InstanceID"]?.ToString().Contains(deviceGuid, StringComparison.OrdinalIgnoreCase) == true);
+                (a["InstanceID"]?.ToString() ?? "").StartsWith(fullPortId + "\\", StringComparison.OrdinalIgnoreCase));
 
             if (allocation != null)
             {
@@ -97,9 +107,9 @@ public class VmNetworkService
         }
 
         return resultList;
-    }
+    });
 
-    public async Task<List<string>> GetAvailableSwitchesAsync()
+    public static async Task<List<string>> GetAvailableSwitchesAsync()
     {
         var response = await WmiApi.QueryAsync(
             "SELECT ElementName FROM Msvm_VirtualEthernetSwitch",
@@ -111,17 +121,13 @@ public class VmNetworkService
             .ToList()!;
     }
 
-    public async Task FillDynamicIpsAsync(string vmName, IEnumerable<VmNetworkAdapter> adapters)
+    public static async Task FillDynamicIpsAsync(string vmName, IEnumerable<VmNetworkAdapter> adapters)
     {
-        var targets = adapters
-            .Where(a => (a.IpAddresses == null || a.IpAddresses.Count == 0)
-                     && !string.IsNullOrEmpty(a.MacAddress))
-            .ToList();
-
-        if (targets.Count == 0) return;
-
-        foreach (var adapter in targets)
+        // 只填"没 IP"的网卡:有 IP 的(集成服务报的,含 IPv6/多地址)是权威列表,绝不覆盖。
+        // 空网卡(无集成服务的 VM,如国产环境)走 Lookup(内部 嗅探→集成→邻居)补 IPv4。
+        foreach (var adapter in adapters)
         {
+            if (string.IsNullOrEmpty(adapter.MacAddress)) continue;
             if (adapter.IpAddresses != null && adapter.IpAddresses.Count > 0) continue;
             try
             {
@@ -137,14 +143,16 @@ public class VmNetworkService
         }
     }
 
-    public async Task<string> GetVmIpAddressAsync(string vmName, string macAddressWithColons)
+    public static async Task<string> GetVmIpAddressAsync(string vmName, string macAddressWithColons)
     {
         return await VmIpService.Lookup(vmName, macAddressWithColons);
     }
 
     // ── 网卡生命周期 ──────────────────────────────────────────────
 
-    public async Task<(bool Success, string Message)> AddNetworkAdapterAsync(string vmName)
+    // 整体放进 Task.Run：首个 await 前的同步 WMI(GetVmComputerSystem/GetVirtualSystemManagementService/searcher.Get)
+    // 都在调用线程；加网卡从 UI 线程 await 调到会卡。
+    public static Task<(bool Success, string Message)> AddNetworkAdapterAsync(string vmName) => Task.Run(async () =>
     {
         try
         {
@@ -206,14 +214,14 @@ public class VmNetworkService
         {
             return (false, ex.Message);
         }
-    }
+    });
 
-    public async Task<(bool Success, string Message)> RemoveNetworkAdapterAsync(string vmName, string id)
+    public static async Task<(bool Success, string Message)> RemoveNetworkAdapterAsync(string vmName, string id)
     {
         string escapedId = id.Replace("\\", "\\\\");
 
         var pathResponse = await WmiApi.QueryFirstAsync(
-            $"SELECT * FROM Msvm_SyntheticEthernetPortSettingData WHERE InstanceID = '{escapedId}'",
+            $"SELECT * FROM {PortSettingClass(id)} WHERE InstanceID = '{escapedId}'",
             obj => obj.Path.Path);
 
         if (!pathResponse.HasData)
@@ -229,13 +237,13 @@ public class VmNetworkService
             : (false, result.Error);
     }
 
-    public async Task<(bool Success, string Message)> UpdateConnectionAsync(
+    public static async Task<(bool Success, string Message)> UpdateConnectionAsync(
         string vmName, VmNetworkAdapter adapter)
     {
         string escapedId = adapter.Id.Replace("\\", "\\\\");
 
         var xmlResponse = await WmiApi.QueryFirstAsync(
-            $"SELECT * FROM Msvm_SyntheticEthernetPortSettingData WHERE InstanceID = '{escapedId}'",
+            $"SELECT * FROM {PortSettingClass(adapter.Id)} WHERE InstanceID = '{escapedId}'",
             port =>
             {
                 using var allocation = port.GetRelated("Msvm_EthernetPortAllocationSettingData")
@@ -269,7 +277,35 @@ public class VmNetworkService
 
     // ── 高级特性配置 ──────────────────────────────────────────────
 
-    public async Task<(bool Success, string Message)> ApplyVlanSettingsAsync(
+    // 改静态 MAC：写网卡 setting(合成/旧版按 PortSettingClass 派发到对应类)的 Address + StaticMacAddress(本身不是 feature，用 ModifyResourceSettings)。
+    // 输入空=改回动态(系统分配)。运行中能否改由 Hyper-V 决定，失败回原始码。
+    public static async Task<(bool Success, string Message)> SetMacAddressAsync(
+        string vmName, VmNetworkAdapter adapter, string newMac)
+    {
+        string? norm = MacAddress.Normalize(newMac);
+        if (norm == null)
+            return (false, Properties.Resources.Error_Net_MacInvalid);
+
+        bool toStatic = norm.Length == 12;
+        string safeId = adapter.Id.Replace(@"\", @"\\").Replace("'", "\\'");
+
+        // 按网卡类型派发到对应 setting 类(旧版=Emulated、合成=Synthetic;段数判断见 PortSettingClass)，一次定位、错误即真因。
+        var result = await WmiApi.WithObjectAsync(
+            wql: $"SELECT * FROM {PortSettingClass(adapter.Id)} WHERE InstanceID = '{safeId}'",
+            modifier: obj =>
+            {
+                obj["StaticMacAddress"] = toStatic;
+                if (toStatic) obj["Address"] = norm;
+            },
+            submitMethod: "ModifyResourceSettings", submitParamName: "ResourceSettings",
+            wrapInArray: true, serviceWql: ServiceWql);
+
+        return result.Success
+            ? (true, string.Empty)
+            : (false, FriendlyError.LastSentence(result.Error));
+    }
+
+    public static async Task<(bool Success, string Message)> ApplyVlanSettingsAsync(
         string vmName, VmNetworkAdapter adapter)
     {
         if (adapter.VlanMode == VlanOperationMode.Private)
@@ -329,7 +365,7 @@ public class VmNetworkService
         });
     }
 
-    public Task<(bool Success, string Message)> ApplyBandwidthSettingsAsync(
+    public static Task<(bool Success, string Message)> ApplyBandwidthSettingsAsync(
         string vmName, VmNetworkAdapter adapter)
         => EnsureAndModifyFeatureAsync(adapter.Id, "Msvm_EthernetSwitchPortBandwidthSettingData", s =>
         {
@@ -337,7 +373,7 @@ public class VmNetworkService
             s["Reservation"] = (ulong)(adapter.BandwidthReservation * 1000000);
         });
 
-    public Task<(bool Success, string Message)> ApplySecuritySettingsAsync(
+    public static Task<(bool Success, string Message)> ApplySecuritySettingsAsync(
         string vmName, VmNetworkAdapter adapter)
         => EnsureAndModifyFeatureAsync(adapter.Id, "Msvm_EthernetSwitchPortSecuritySettingData", s =>
         {
@@ -349,7 +385,7 @@ public class VmNetworkService
             s["StormLimit"] = (uint)adapter.StormLimit;
         });
 
-    public Task<(bool Success, string Message)> ApplyOffloadSettingsAsync(
+    public static Task<(bool Success, string Message)> ApplyOffloadSettingsAsync(
         string vmName, VmNetworkAdapter adapter)
         => EnsureAndModifyFeatureAsync(adapter.Id, "Msvm_EthernetSwitchPortOffloadSettingData", s =>
         {
@@ -358,9 +394,16 @@ public class VmNetworkService
             s["IPSecOffloadLimit"] = (uint)(adapter.IpsecOffloadEnabled ? 512 : 0);
         });
 
-    // ── 核心内部逻辑 ──────────────────────────────────────────────
+    // ── 内部逻辑 ──────────────────────────────────────────────
 
-    private async Task<(bool Success, string Message)> EnsureAndModifyFeatureAsync(
+    // 网卡 setting 所在的 WMI 类:旧版网卡 InstanceID 3 段(Microsoft:VMGUID\DEVICEGUID\0)属 Emulated 类，
+    // 合成网卡 2 段(Microsoft:VMGUID\DEVICEGUID)属 Synthetic 类。按段数派发(本机实测确认)。
+    private static string PortSettingClass(string instanceId) =>
+        (instanceId ?? "").Split('\\').Length >= 3
+            ? "Msvm_EmulatedEthernetPortSettingData"
+            : "Msvm_SyntheticEthernetPortSettingData";
+
+    private static async Task<(bool Success, string Message)> EnsureAndModifyFeatureAsync(
         string portId, string featureClass, Action<ManagementObject> updateAction)
     {
         try
@@ -368,7 +411,7 @@ public class VmNetworkService
             string escapedId = portId.Replace("\\", "\\\\");
 
             var xmlInfo = await WmiApi.QueryFirstAsync(
-                $"SELECT * FROM Msvm_SyntheticEthernetPortSettingData WHERE InstanceID = '{escapedId}'",
+                $"SELECT * FROM {PortSettingClass(portId)} WHERE InstanceID = '{escapedId}'",
                 port =>
                 {
                     using var allocation = port.GetRelated("Msvm_EthernetPortAllocationSettingData")
@@ -422,7 +465,7 @@ public class VmNetworkService
 
     // ── 业务逻辑 ──────────────────────────────────────────────────
 
-    private void ParseFeatureSettings(VmNetworkAdapter adapter, ManagementObject feature)
+    private static void ParseFeatureSettings(VmNetworkAdapter adapter, ManagementObject feature)
     {
         string cls = feature.ClassPath.ClassName;
 
@@ -460,7 +503,7 @@ public class VmNetworkService
         }
     }
 
-    private async Task<string> GetSwitchNameByGuidAsync(string? guid)
+    private static async Task<string> GetSwitchNameByGuidAsync(string? guid)
     {
         if (string.IsNullOrEmpty(guid)) return Properties.Resources.Status_Unconnected;
         var response = await WmiApi.QueryFirstAsync(
@@ -469,7 +512,7 @@ public class VmNetworkService
         return response.HasData ? response.Data! : Properties.Resources.Common_UnknownSwitch;
     }
 
-    private string? GetSwitchPathByName(string switchName)
+    private static string? GetSwitchPathByName(string switchName)
     {
         using var svcForScope = WmiApi.GetVirtualSystemManagementService();
         using var searcher = new ManagementObjectSearcher(svcForScope.Scope,
@@ -478,7 +521,7 @@ public class VmNetworkService
         return col.Cast<ManagementObject>().FirstOrDefault()?.Path.Path;
     }
 
-    private ManagementObject? GetDefaultFeatureTemplate(string className)
+    private static ManagementObject? GetDefaultFeatureTemplate(string className)
     {
         using var svcForScope = WmiApi.GetVirtualSystemManagementService();
         using var searcher = new ManagementObjectSearcher(svcForScope.Scope,

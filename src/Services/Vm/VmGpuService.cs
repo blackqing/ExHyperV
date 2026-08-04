@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Management;
@@ -13,23 +14,17 @@ namespace ExHyperV.Services
 {
     public class VmGpuService
     {
-        private readonly VmPowerService _powerService;
         private readonly VmQueryService _queryService;
-        private readonly VmNetworkService _networkService;
-        private readonly VmStorageService _storageService;
-        private readonly VmMmioService _mmioService = new();
-        public VmGpuService(VmPowerService powerService, VmQueryService queryService, VmNetworkService networkService, VmStorageService storageService)
+        private readonly AsyncLocal<ConcurrentQueue<string>?> _linkWarnings = new();
+        public VmGpuService(VmQueryService queryService)
         {
-            _powerService = powerService;
             _queryService = queryService;
-            _networkService = networkService;
-            _storageService = storageService;
         }
 
         private class VmDiskTarget
         {
             public bool IsPhysical { get; set; }
-            public string Path { get; set; }        // 虚拟文件的VHDX 路径
+            public string Path { get; set; } = string.Empty;        // 虚拟文件的VHDX 路径
             public int PhysicalDiskNumber { get; set; } // 物理硬盘的 Disk Number (e.g. 0, 1, 2)
         }
         private const string ScriptBaseUrl = "https://raw.githubusercontent.com/Justsenger/ExHyperV/main/src/Linux/script/";
@@ -39,7 +34,6 @@ namespace ExHyperV.Services
             return Task.Run(() =>
             {
                 HyperVGpuPolicyService.AllowUnsupportedGpuAssignment();
-                HyperVGpuPolicyService.DisableGpuPartitionStrictMode();
             });
         }
 
@@ -93,36 +87,32 @@ namespace ExHyperV.Services
                     return c;
                 }
             }
-            throw new IOException(ExHyperV.Properties.Resources.Error_NoAvailableDriveLetters);
+            throw new IOException(Properties.Resources.Error_NoAvailableDriveLetters);
         }
 
         #region 硬件信息与虚拟机查询
-        public async Task<List<GPUInfo>> GetHostGpusAsync()
+        public async Task<List<GpuInfo>> GetHostGpusAsync()
         {
             var pciInfoProvider = new PciIds();
             await pciInfoProvider.EnsureInitializedAsync();
 
-            var gpuList = new List<GPUInfo>();
+            var gpuList = new List<GpuInfo>();
 
-            // 1. Win32_VideoController
-            var gpuResp = await WmiApi.QueryAsync(
-                "SELECT PNPDeviceID, Name, AdapterCompatibility, DriverVersion FROM Win32_VideoController",
-                obj => new {
-                    Name = obj["Name"]?.ToString(),
-                    InstanceId = obj["PNPDeviceID"]?.ToString(),
-                    Manu = obj["AdapterCompatibility"]?.ToString(),
-                    DriverVersion = obj["DriverVersion"]?.ToString()
-                }, WmiScope.CimV2);
-
-            if (gpuResp.HasData)
+            // 1. 设备列表 + 完整 InstanceId + 厂商 + 驱动版本：走原生 CfgMgr 的"在位"枚举(Win32Api.GetPresentDisplayAdapters)。
+            //    替代偶发数秒慢的 Win32_VideoController(它实探显示驱动、GPU 空闲会被唤醒)；FILTER_PRESENT 天然排除幻影设备。
+            //    已在系统上用原生 CM_* 实测核对：仅列在位 GPU、DriverVersion 取自正确 DEVPKEY，与 Win32_VideoController 数据一致。
+            var displayAdapters = await Task.Run(() => Win32Api.GetPresentDisplayAdapters());
+            foreach (var (instanceId, name, manu, driverVersion) in displayAdapters)
             {
-                foreach (var gpu in gpuResp.Data)
+                if (string.IsNullOrEmpty(name)) continue;
+                gpuList.Add(new GpuInfo
                 {
-                    if (gpu.Name == null || gpu.InstanceId == null || gpu.Manu == null || gpu.DriverVersion == null) continue;
-                    if (!gpu.InstanceId.ToUpper().StartsWith("PCI\\") && !gpu.InstanceId.ToUpper().Contains("ACPI")) continue;
-                    string vendor = pciInfoProvider.GetVendorFromInstanceId(gpu.InstanceId);
-                    gpuList.Add(new GPUInfo(gpu.Name, "True", gpu.Manu, gpu.InstanceId, null, null, gpu.DriverVersion, vendor));
-                }
+                    Name = name,
+                    Manu = string.IsNullOrEmpty(manu) ? pciInfoProvider.GetVendorFromInstanceId(instanceId) : manu,
+                    InstanceId = instanceId,
+                    DriverVersion = driverVersion,
+                    Vendor = pciInfoProvider.GetVendorFromInstanceId(instanceId)
+                });
             }
 
             // 2. GPU RAM 注册表
@@ -194,27 +184,36 @@ namespace ExHyperV.Services
         }
         public async Task<List<(string Id, string InstancePath)>> GetVmGpuAdaptersAsync(string vmName)
         {
+            var result = await TryGetVmGpuAdaptersAsync(vmName);
+            return result.Adapters;
+        }
+
+        public async Task<(bool Success, List<(string Id, string InstancePath)> Adapters)> TryGetVmGpuAdaptersAsync(string vmName)
+        {
             var result = new List<(string Id, string InstancePath)>();
             string scopePath = @"\\.\root\virtualization\v2";
             try
             {
-                var notesResp = await WmiApi.QueryFirstAsync(
-                    $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
-                    obj => obj["Notes"] is string[] arr ? string.Join("\n", arr) : obj["Notes"]?.ToString() ?? "");
-                string vmNotes = notesResp.Data ?? "";
+                // Win10 早期 Msvm_GpuPartitionSettingData.HostResource 读不回 → 无法按分区对应物理 GPU。
+                // 取宿主首张(通常也是唯一)可分区 GPU 的 Name 兜底显示参数：单卡准确；多卡是引擎启动时自选、
+                // 本就无法精确对应的固有局限(禁用其他卡强选的老思路已不在)。Win11 走 HostResource 精确路径、到不了这兜底。
+                var partGpuResp = await WmiApi.QueryAsync(
+                    "SELECT Name FROM Msvm_PartitionableGpu",
+                    obj => obj["Name"]?.ToString() ?? "");
+                string firstPartitionableGpu = partGpuResp.Data?.FirstOrDefault(n => !string.IsNullOrEmpty(n)) ?? "";
 
-                string query = $"SELECT * FROM Msvm_ComputerSystem WHERE ElementName = '{vmName}'";
+                string query = $"SELECT * FROM Msvm_ComputerSystem WHERE ElementName = '{WmiApi.Escape(vmName)}'";
                 using var searcher = new ManagementObjectSearcher(scopePath, query);
                 using var vmCollection = searcher.Get();
                 var computerSystem = vmCollection.Cast<ManagementObject>().FirstOrDefault();
-                if (computerSystem == null) return result;
+                if (computerSystem == null) return (false, result);
 
                 using var relatedSettings = computerSystem.GetRelated(
                     "Msvm_VirtualSystemSettingData",
                     "Msvm_SettingsDefineState",
                     null, null, null, null, false, null);
                 var virtualSystemSetting = relatedSettings.Cast<ManagementObject>().FirstOrDefault();
-                if (virtualSystemSetting == null) return result;
+                if (virtualSystemSetting == null) return (false, result);
 
                 using var gpuSettingsCollection = virtualSystemSetting.GetRelated(
                     "Msvm_GpuPartitionSettingData",
@@ -238,18 +237,9 @@ namespace ExHyperV.Services
                         catch { }
                     }
 
+                    // HostResource 空/Unknown(Win10 早期) → 兜底用首张可分区 GPU 的 Name(单卡准确)
                     if (string.IsNullOrEmpty(instancePath) || instancePath.Contains("Unknown"))
-                    {
-                        string tagPrefix = "[AssignedGPU:";
-                        int startIndex = vmNotes.IndexOf(tagPrefix);
-                        if (startIndex != -1)
-                        {
-                            startIndex += tagPrefix.Length;
-                            int endIndex = vmNotes.IndexOf("]", startIndex);
-                            if (endIndex != -1)
-                                instancePath = vmNotes.Substring(startIndex, endIndex - startIndex);
-                        }
-                    }
+                        instancePath = firstPartitionableGpu;
 
                     if (!string.IsNullOrEmpty(adapterId))
                         result.Add((adapterId, instancePath));
@@ -258,8 +248,9 @@ namespace ExHyperV.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"WMI Query Error: {ex.Message}");
+                return (false, new List<(string Id, string InstancePath)>());
             }
-            return result;
+            return (true, result);
         }
         #endregion
 
@@ -297,28 +288,27 @@ namespace ExHyperV.Services
         {
             try
             {
+                // 读裸 WMI 的真实属性：HighMmioGapSize(MB) + GuestControlledCacheTypes。
+                // 旧实现读 HighMemoryMappedIoSpace/HighMemoryMappedIoBaseAddress(字节)——那是 PowerShell Get-VM 对象的属性，
+                // Msvm_VirtualSystemSettingData 上【根本不存在】(实测 6 台 VM 全 <属性不存在>) → 恒判"未配置" → 每次添加都白白强制关机+重优化。
                 var r = await WmiApi.QueryFirstAsync(
-                    $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
-                    obj =>
-                    {
-                        ulong highMMIO = Convert.ToUInt64(obj["HighMemoryMappedIoSpace"] ?? 0);
-                        ulong baseAddr = Convert.ToUInt64(obj["HighMemoryMappedIoBaseAddress"] ?? 0);
-                        bool cacheEnabled = Convert.ToBoolean(obj["GuestControlledCacheTypes"] ?? false);
-                        return (highMMIO, baseAddr, cacheEnabled);
-                    });
+                    $"SELECT HighMmioGapSize, GuestControlledCacheTypes FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
+                    obj => (
+                        HighMmioMb: Convert.ToUInt64(obj["HighMmioGapSize"] ?? 0),
+                        Cache: Convert.ToBoolean(obj["GuestControlledCacheTypes"] ?? false)));
 
                 if (!r.HasData) return false;
-                var (h, b, c) = r.Data;
-                if (h < 32212254720) return false;
-                if (b == 68182605824 || b == 36507222016) return false;
-                if (!c) return false;
-                return true;
+                if (!r.Data.Cache) return false;
+
+                // 与 ConfigureMmio 会写入的目标比对(同一 ComputeMmioPlan、主机自适应)：已 >= 目标高位 MMIO 间隙即视为达标、无需重配。
+                ulong targetMb = VmMmioService.ComputeMmioPlan()?.HighSizeMb ?? VmMmioService.DefaultHighSizeMb; // 读不到主机上限时回退默认 256G（同一常量）
+                return r.Data.HighMmioMb >= targetMb;
             }
             catch { return false; }
         }
         public async Task<bool> OptimizeVmForGpuAsync(string vmName)
         {
-            return await _mmioService.ConfigureMmioAsync(vmName);
+            return await VmMmioService.ConfigureMmioAsync(vmName);
         }
 
         #endregion
@@ -327,7 +317,7 @@ namespace ExHyperV.Services
         private async Task<List<VmDiskTarget>> GetAllVmHardDrivesAsync(string vmName)
         {
             var vm = new VmInstance(Guid.Empty, vmName);
-            await _storageService.LoadVmStorageItemsAsync(vm);
+            await VmStorageService.LoadVmStorageItemsAsync(vm);
 
             Debug.WriteLine($"[GPU] StorageItems count: {vm.StorageItems.Count}");
             foreach (var item in vm.StorageItems)
@@ -358,14 +348,14 @@ namespace ExHyperV.Services
                     {
                         if (target.IsPhysical)
                         {
-                            await _storageService.SetDiskOfflineStatusAsync(target.PhysicalDiskNumber, false);
-                            await _storageService.SetDiskReadOnlyAsync(target.PhysicalDiskNumber, true);
+                            await HostDiskService.SetDiskOfflineStatusAsync(target.PhysicalDiskNumber, false);
+                            await HostDiskService.SetDiskReadOnlyAsync(target.PhysicalDiskNumber, true);
                             await Task.Delay(500);
                             hostDiskNumber = target.PhysicalDiskNumber;
                         }
                         else
                         {
-                            var mountResult = await _storageService.MountVhdxAsync(target.Path);
+                            var mountResult = await VmStorageService.MountVhdxAsync(target.Path);
                             if (mountResult.Success)
                                 hostDiskNumber = mountResult.DiskNumber;
                         }
@@ -393,12 +383,12 @@ namespace ExHyperV.Services
                     {
                         if (target.IsPhysical)
                         {
-                            await _storageService.SetDiskReadOnlyAsync(target.PhysicalDiskNumber, false);
-                            await _storageService.SetDiskOfflineStatusAsync(target.PhysicalDiskNumber, true);
+                            await HostDiskService.SetDiskReadOnlyAsync(target.PhysicalDiskNumber, false);
+                            await HostDiskService.SetDiskOfflineStatusAsync(target.PhysicalDiskNumber, true);
                         }
                         else if (!string.IsNullOrEmpty(target.Path))
                         {
-                            await _storageService.DismountVhdxAsync(target.Path);
+                            await VmStorageService.DismountVhdxAsync(target.Path);
                         }
                     }
                 }
@@ -448,7 +438,7 @@ namespace ExHyperV.Services
                 var vmSettingResp = await WmiApi.QueryFirstAsync(
                     $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
                     obj => obj.Path.Path);
-                if (!vmSettingResp.HasData) return (false, "VM setting not found");
+                if (!vmSettingResp.HasData) return (false, Properties.Resources.Error_Vm_GetSettings);
 
                 // 5. AddResourceSettings
                 var result = await WmiApi.InvokeAsync(
@@ -542,6 +532,8 @@ namespace ExHyperV.Services
             int savedCtrlLoc = 0;
             bool isPhysical = diskTarget.IsPhysical;
             bool detachSuccess = false;
+            var linkWarnings = new ConcurrentQueue<string>();
+            _linkWarnings.Value = linkWarnings;
 
 
             void Log(string msg) => progressCallback?.Invoke(msg);
@@ -552,7 +544,7 @@ namespace ExHyperV.Services
                 {
                     Log(string.Format(Properties.Resources.Msg_Gpu_DismountingDisk, diskTarget.PhysicalDiskNumber));
                     hostDiskNumber = diskTarget.PhysicalDiskNumber;
-                    var detachResult = await _storageService.DetachPhysicalDiskAsync(vmName, hostDiskNumber);
+                    var detachResult = await VmStorageService.DetachPhysicalDiskAsync(vmName, hostDiskNumber);
                     if (!detachResult.Success) return Properties.Resources.Error_Gpu_DiskNotFound;
                     savedCtrlType = detachResult.CtrlType;
                     savedCtrlNum = detachResult.CtrlNum;
@@ -561,13 +553,13 @@ namespace ExHyperV.Services
 
 
 
-                    await _storageService.SetDiskOfflineStatusAsync(hostDiskNumber, false);
-                    await _storageService.SetDiskReadOnlyAsync(hostDiskNumber, false);
+                    await HostDiskService.SetDiskOfflineStatusAsync(hostDiskNumber, false);
+                    await HostDiskService.SetDiskReadOnlyAsync(hostDiskNumber, false);
 
                 }
                 else
                 {
-                    var mountResult = await _storageService.MountVhdxAsync(diskTarget.Path);
+                    var mountResult = await VmStorageService.MountVhdxAsync(diskTarget.Path);
                     if (!mountResult.Success)
                         return Properties.Resources.Error_Gpu_MountVhdFailed;
                     hostDiskNumber = mountResult.DiskNumber;
@@ -576,7 +568,7 @@ namespace ExHyperV.Services
                 Log(string.Format(Properties.Resources.Msg_Gpu_AssignTempDrive, hostDiskNumber, partition.PartitionNumber));
 
                 char suggestedLetter = GetFreeDriveLetter();
-                var assignResult = await _storageService.AssignPartitionDriveLetterAsync(hostDiskNumber, partition.PartitionNumber, suggestedLetter);
+                var assignResult = await VmStorageService.AssignPartitionDriveLetterAsync(hostDiskNumber, partition.PartitionNumber, suggestedLetter);
                 if (!assignResult.Success)
                     return string.Format(Properties.Resources.Error_Gpu_InjectFailed, "Failed to assign drive letter");
                 assignedDriveLetter = $"{suggestedLetter}:\\";
@@ -598,7 +590,14 @@ namespace ExHyperV.Services
                 string sourceFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "DriverStore", "FileRepository");
                 string destFolder = Path.Combine(assignedDriveLetter, "Windows", "System32", "HostDriverStore", "FileRepository");
 
-                if (!Directory.Exists(destFolder)) Directory.CreateDirectory(destFolder);
+                if (Directory.Exists(destFolder))
+                {
+                    RemoveReadOnlyAttribute(destFolder);
+                }
+                else
+                {
+                    Directory.CreateDirectory(destFolder);
+                }
 
                 Log(Properties.Resources.Msg_Gpu_SyncingFiles);
 
@@ -613,26 +612,40 @@ namespace ExHyperV.Services
                     await p.WaitForExitAsync();
                 }
 
-                PromoteRegistryDefinedFiles(assignedDriveLetter); // 微软注册表文件提取
+                await Task.Run(() => SetFolderReadOnly(destFolder));
+
+                // 同步重活（注册表提取 + 各厂商 Promote*：内部对每个文件 spawn cmd.exe 并同步 WaitForExit 几十~上百次）
+                // 挪到后台线程——否则作为 robocopy await 之后的续体跑在 UI 线程上，会冻结主界面（转圈/窗口都卡死）。
+                // Log 回调仍在 UI 续体里执行（这些 Task.Run 之间的代码在 UI 线程），更新 task.Description 安全、无需 Dispatcher。
+                await Task.Run(() => PromoteRegistryDefinedFiles(assignedDriveLetter)); // 微软注册表文件提取
 
                 if (gpuManu.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
                 {
                     Log(Properties.Resources.Msg_Gpu_InjectingReg);
-                    NvidiaReg(assignedDriveLetter);
-                    PromoteNvidiaFiles(assignedDriveLetter);
+                    string nvidiaRegResult = await Task.Run(() =>
+                    {
+                        string result = NvidiaReg(assignedDriveLetter);
+                        PromoteNvidiaFiles(assignedDriveLetter);
+                        return result;
+                    });
+                    if (!string.Equals(nvidiaRegResult, "OK", StringComparison.Ordinal))
+                    {
+                        try { Log(nvidiaRegResult); }
+                        catch { }
+                    }
                     await NvidiaProgramFoldersAsync(assignedDriveLetter, Log);
                 }
                 else if (gpuManu.Contains("Intel", StringComparison.OrdinalIgnoreCase))
                 {
-                    PromoteIntelGpuFiles(assignedDriveLetter);
+                    await Task.Run(() => PromoteIntelGpuFiles(assignedDriveLetter));
                 }
                 else if (gpuManu.Contains("AMD", StringComparison.OrdinalIgnoreCase) || gpuManu.Contains("Advanced", StringComparison.OrdinalIgnoreCase))
                 {
-                    PromoteAmdGpuFiles(assignedDriveLetter);
+                    await Task.Run(() => PromoteAmdGpuFiles(assignedDriveLetter));
                 }
                 else if (gpuManu.Contains("Qualcomm", StringComparison.OrdinalIgnoreCase) || gpuManu.Contains("QCOM", StringComparison.OrdinalIgnoreCase))
                 {
-                    PromoteQualcommGpuFiles(assignedDriveLetter);
+                    await Task.Run(() => PromoteQualcommGpuFiles(assignedDriveLetter));
                 }
 
 
@@ -641,16 +654,23 @@ namespace ExHyperV.Services
             catch (Exception ex) { return string.Format(Properties.Resources.Error_Gpu_InjectFailed, ex.Message); }
             finally
             {
+                while (linkWarnings.TryDequeue(out string warning))
+                {
+                    try { Log(warning); }
+                    catch { }
+                }
+                _linkWarnings.Value = null;
+
                 if (isPhysical && hostDiskNumber != -1 && detachSuccess)
                 {
                     Log(Properties.Resources.Msg_Gpu_Remounting);
                     try
                     {
-                        await _storageService.RemoveAllPartitionAccessPathsAsync(hostDiskNumber);
-                        await _storageService.SetDiskOfflineStatusAsync(hostDiskNumber, true);
+                        await VmStorageService.RemoveAllPartitionAccessPathsAsync(hostDiskNumber);
+                        await HostDiskService.SetDiskOfflineStatusAsync(hostDiskNumber, true);
                         await Task.Delay(1000);
 
-                        await _storageService.AddDriveAsync(
+                        await VmStorageService.AddDriveAsync(
                             vmName, savedCtrlType, savedCtrlNum, savedCtrlLoc,
                             "HardDisk", pathOrNumber: hostDiskNumber.ToString(),
                             isPhysical: true);
@@ -662,7 +682,7 @@ namespace ExHyperV.Services
                 else if (!string.IsNullOrEmpty(diskTarget?.Path))
                 {
                     Log(Properties.Resources.Msg_Gpu_Unmounting);
-                    await _storageService.DismountVhdxAsync(diskTarget.Path);
+                    await VmStorageService.DismountVhdxAsync(diskTarget.Path);
                 }
             }
         }
@@ -968,16 +988,34 @@ namespace ExHyperV.Services
                 }
 
                 string hostLinkPath = Path.Combine(hostDestDir, targetName);
-                if (System.IO.File.Exists(hostLinkPath) || System.IO.Directory.Exists(hostLinkPath))
-                {
-                    return;
-                }
+                bool isReparsePoint = false;
+                bool targetPathExists = File.Exists(hostLinkPath) || Directory.Exists(hostLinkPath);
                 try
                 {
-                    if (System.IO.File.GetAttributes(hostLinkPath) != (System.IO.FileAttributes)(-1))
+                    isReparsePoint = File.GetAttributes(hostLinkPath).HasFlag(FileAttributes.ReparsePoint);
+                    targetPathExists = true;
+                }
+                catch { }
+
+                // 刷新旧版创建的错误链接；来宾原有的普通文件仍保持不变。
+                if (targetPathExists && !isReparsePoint) return;
+
+                if (isReparsePoint)
+                {
+                    int deleteExitCode = ExecuteCommand($"cmd /c del /f /q \"{hostLinkPath}\"");
+                    if (deleteExitCode != 0)
                     {
-                        ExecuteCommand($"cmd /c del /f /q \"{hostLinkPath}\"");
+                        string warning = $"[GPU Link] Unable to replace {hostLinkPath}: del exited with code {deleteExitCode}.";
+                        Debug.WriteLine(warning);
+                        _linkWarnings.Value?.Enqueue(warning);
+                        return;
                     }
+                }
+
+                try
+                {
+                    if (File.GetAttributes(hostLinkPath) != (FileAttributes)(-1))
+                        return;
                 }
                 catch {}
 
@@ -989,15 +1027,67 @@ namespace ExHyperV.Services
                 if (foundFiles.Count == 0) return;
 
                 string hostSourceFile = foundFiles[0].FullName;
-                string guestInternalTarget = hostSourceFile.Replace(assignedDriveLetter, "C:");
+                string relativeSourcePath = Path.GetRelativePath(
+                    Path.GetFullPath(assignedDriveLetter),
+                    Path.GetFullPath(hostSourceFile));
 
-                ExecuteCommand($"cmd /c mklink \"{hostLinkPath}\" \"{guestInternalTarget}\"");
+                if (Path.IsPathRooted(relativeSourcePath) ||
+                    relativeSourcePath.Equals("..", StringComparison.Ordinal) ||
+                    relativeSourcePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                {
+                    throw new IOException($"Driver source is outside the mounted guest volume: {hostSourceFile}");
+                }
+
+                string guestInternalTarget = Path.Combine(@"C:\", relativeSourcePath);
+
+                int exitCode = ExecuteCommand($"cmd /c mklink \"{hostLinkPath}\" \"{guestInternalTarget}\"");
+                if (exitCode != 0)
+                {
+                    string warning = $"[GPU Link] {targetName} -> {guestInternalTarget}: mklink exited with code {exitCode}.";
+                    Debug.WriteLine(warning);
+                    _linkWarnings.Value?.Enqueue(warning);
+                }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Link error for {sourceName}: {ex.Message}");
+                string warning = $"[GPU Link] {sourceName}: {ex.Message}";
+                Debug.WriteLine(warning);
+                _linkWarnings.Value?.Enqueue(warning);
             }
         }
+
+        private static void SetFolderReadOnly(string folderPath)
+        {
+            var directory = new DirectoryInfo(folderPath);
+            directory.Attributes |= FileAttributes.ReadOnly;
+
+            foreach (var subDirectory in directory.GetDirectories())
+            {
+                SetFolderReadOnly(subDirectory.FullName);
+            }
+
+            foreach (var file in directory.GetFiles())
+            {
+                file.Attributes |= FileAttributes.ReadOnly;
+            }
+        }
+
+        private static void RemoveReadOnlyAttribute(string folderPath)
+        {
+            var directory = new DirectoryInfo(folderPath);
+            directory.Attributes &= ~FileAttributes.ReadOnly;
+
+            foreach (var subDirectory in directory.GetDirectories())
+            {
+                RemoveReadOnlyAttribute(subDirectory.FullName);
+            }
+
+            foreach (var file in directory.GetFiles())
+            {
+                file.Attributes &= ~FileAttributes.ReadOnly;
+            }
+        }
+
         private string NvidiaReg(string letter)
         {
             string tempRegFile = Path.Combine(Path.GetTempPath(), $"nvlddmkm_{Guid.NewGuid()}.reg");
@@ -1017,7 +1107,9 @@ namespace ExHyperV.Services
                 regContent = regContent.Replace(originalText, targetText);
                 regContent = regContent.Replace("DriverStore", "HostDriverStore");
                 File.WriteAllText(tempRegFile, regContent);
-                ExecuteCommand($@"reg import ""{tempRegFile}""");
+                int importExitCode = ExecuteCommand($@"reg import ""{tempRegFile}""");
+                if (importExitCode != 0)
+                    return string.Format(Properties.Resources.Error_NvidiaRegistryImportFailed, importExitCode);
 
                 return "OK";
             }
@@ -1049,7 +1141,7 @@ namespace ExHyperV.Services
 
                 string targetPath = Path.Combine(assignedDriveLetter, relativePath);
 
-                Log?.Invoke(string.Format("Syncing: {0} -> {1}", sourcePath, targetPath));
+                Log?.Invoke(string.Format(Properties.Resources.Log_Gpu_Syncing, sourcePath, targetPath));
 
                 if (!Directory.Exists(targetPath))
                 {
@@ -1078,7 +1170,7 @@ namespace ExHyperV.Services
             return @"C:\Windows\System32\DriverStore\FileRepository";
         }
 
-        private async Task UploadLocalFilesAsync(SshService sshService, SshCredentials credentials, string remoteDirectory)
+        private async Task UploadLocalFilesAsync(SshCredentials credentials, string remoteDirectory)
         {
             string systemWslLibPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "lxss", "lib");
 
@@ -1088,7 +1180,7 @@ namespace ExHyperV.Services
                 foreach (var filePath in allFiles)
                 {
                     string fileName = Path.GetFileName(filePath);
-                    await sshService.UploadFileAsync(credentials, filePath, $"{remoteDirectory}/{fileName}");
+                    await SshService.UploadFileAsync(credentials, filePath, $"{remoteDirectory}/{fileName}");
                 }
             }
         }
@@ -1097,28 +1189,7 @@ namespace ExHyperV.Services
         {
             var allScripts = new List<LinuxScriptItem>();
 
-            // --- 1. 扫描本地文件夹 ---
-            string localFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "UserScripts");
-            if (!Directory.Exists(localFolder)) Directory.CreateDirectory(localFolder);
-
-            try
-            {
-                var files = Directory.GetFiles(localFolder, "*.sh");
-                foreach (var file in files)
-                {
-                    string content = await File.ReadAllTextAsync(file);
-                    var item = ParseScriptHeader(content);
-                    item.IsLocal = true;
-                    // 【修改点】：添加“本地”标识
-                    item.Name = string.Format(Properties.Resources.VmGPUService_LogLocal, item.Name);
-                    item.SourcePathOrUrl = file;
-                    item.FileName = Path.GetFileName(file);
-                    allScripts.Add(item);
-                }
-            }
-            catch (Exception ex) { Debug.WriteLine($"Local script scan error: {ex.Message}"); }
-
-            // --- 2. 远程扫描 (解析 index.json) ---
+            // 从应用维护的在线索引加载商店版本允许使用的部署脚本。
             try
             {
                 using var httpClient = new HttpClient();
@@ -1134,10 +1205,8 @@ namespace ExHyperV.Services
                 {
                     foreach (var item in remoteScripts)
                     {
-                        item.IsLocal = false;
-                        // 【修改点】：添加“在线”标识
                         item.Name = string.Format(Properties.Resources.VmGPUService_LogOnline, item.Name);
-                        item.SourcePathOrUrl = $"{ScriptBaseUrl}{item.FileName}";
+                        item.SourceUrl = $"{ScriptBaseUrl}{item.FileName}";
                         allScripts.Add(item);
                     }
                 }
@@ -1147,23 +1216,9 @@ namespace ExHyperV.Services
                 Debug.WriteLine($"Remote script index fetch failed: {ex.Message}");
             }
 
-            // 排序保持不变：本地优先，同类按名称排序
             return allScripts
-                .OrderByDescending(x => x.IsLocal)
-                .ThenBy(x => x.Name)
+                .OrderBy(x => x.Name)
                 .ToList();
-        }
-
-        private LinuxScriptItem ParseScriptHeader(string content)
-        {
-            var item = new LinuxScriptItem();
-            item.Name = Regex.Match(content, @"# @Name:\s*(.*)").Groups[1].Value.Trim();
-            item.Description = Regex.Match(content, @"# @Description:\s*(.*)").Groups[1].Value.Trim();
-            item.Author = Regex.Match(content, @"# @Author:\s*(.*)").Groups[1].Value.Trim();
-            item.Version = Regex.Match(content, @"# @Version:\s*(.*)").Groups[1].Value.Trim();
-
-            if (string.IsNullOrEmpty(item.Name)) item.Name = "Unknown Script";
-            return item;
         }
 
         // 支持重启循环的部署函数
@@ -1172,7 +1227,6 @@ namespace ExHyperV.Services
             return Task.Run(async () =>
             {
                 void Log(string msg) => progressCallback?.Invoke(msg);
-                var sshService = new SshService();
 
                 try
                 {
@@ -1180,19 +1234,19 @@ namespace ExHyperV.Services
                     var currentState = await _queryService.GetVmStateAsync(vmName);
                     if (currentState != "2")
                     {
-                        Log("[ExHyperV] Starting VM...");
-                        await _powerService.ExecuteControlActionAsync(vmName, "Start");
+                        Log(Properties.Resources.Log_Gpu_StartingVm);
+                        await VmPowerService.ExecuteControlActionAsync(vmName, "Start");
                         await Task.Delay(5000);
                     }
 
                     Log(Properties.Resources.Msg_Gpu_LinuxWaitingIp);
-                    var adapters = await _networkService.GetNetworkAdaptersAsync(vmName);
-                    if (adapters == null || adapters.Count == 0) return "Failed to get VM MAC Address";
+                    var adapters = await VmNetworkService.GetNetworkAdaptersAsync(vmName);
+                    if (adapters == null || adapters.Count == 0) return Properties.Resources.Error_Gpu_NoMac;
                     string macAddress = adapters[0].MacAddress;
                     string vmIpAddress = await VmIpService.Lookup(vmName, macAddress);
                     string targetIp = Ipv4.SelectBest(!string.IsNullOrWhiteSpace(credentials.Host) ? credentials.Host : vmIpAddress);
 
-                    if (string.IsNullOrEmpty(targetIp)) return "No valid IPv4 address found.";
+                    if (string.IsNullOrEmpty(targetIp)) return Properties.Resources.Error_Gpu_NoIpv4;
                     credentials.Host = targetIp;
 
                     if (!await WaitForVmToBeResponsiveAsync(credentials.Host, credentials.Port, ct))
@@ -1207,10 +1261,10 @@ namespace ExHyperV.Services
                         client.Disconnect();
                     }
 
-                    Log("Uploading Driver and WSL Libraries...");
+                    Log(Properties.Resources.Log_Gpu_UploadingDriverWsl);
                     string sourceDriverPath = FindGpuDriverSourcePath(string.Empty);
-                    await sshService.UploadDirectoryAsync(credentials, sourceDriverPath, $"{remoteTempDir}/drivers");
-                    await UploadLocalFilesAsync(sshService, credentials, $"{remoteTempDir}/lib");
+                    await SshService.UploadDirectoryAsync(credentials, sourceDriverPath, $"{remoteTempDir}/drivers");
+                    await UploadLocalFilesAsync(credentials, $"{remoteTempDir}/lib");
 
                     // --- 阶段 3: 处理自选脚本 ---
                     string remoteScriptPath = $"{remoteTempDir}/{script.FileName}";
@@ -1224,38 +1278,31 @@ namespace ExHyperV.Services
                         proxyEnv = $"http_proxy='{proxyUrl}' https_proxy='{proxyUrl}' HTTP_PROXY='{proxyUrl}' HTTPS_PROXY='{proxyUrl}' ";
                     }
 
-                    if (script.IsLocal)
-                    {
-                        Log($"Uploading local script: {script.Name}");
-                        await sshService.UploadFileAsync(credentials, script.SourcePathOrUrl, remoteScriptPath);
-                    }
-                    else
-                    {
-                        Log($"Downloading remote script inside VM: {script.Name}");
-                        // 使用 sh -c 包裹，确保环境变量对后面的命令生效
-                        string downloadCmd = $"{proxyEnv}sh -c \"wget -q -O {remoteScriptPath} {script.SourcePathOrUrl} || curl -fL {script.SourcePathOrUrl} -o {remoteScriptPath}\"";
+                    Log(string.Format(Properties.Resources.Log_Gpu_DownloadingScript, script.Name));
+                    // 使用 sh -c 包裹，确保环境变量对后面的命令生效
+                    string downloadCmd = $"{proxyEnv}sh -c \"wget -q -O {remoteScriptPath} {script.SourceUrl} || curl -fL {script.SourceUrl} -o {remoteScriptPath}\"";
 
-                        await sshService.ExecuteSingleCommandAsync(credentials, downloadCmd, Log);
-                    }
-                    await sshService.ExecuteSingleCommandAsync(credentials, $"chmod +x {remoteScriptPath}", Log);
+                    await SshService.ExecuteSingleCommandAsync(credentials, downloadCmd, Log);
+                    await SshService.ExecuteSingleCommandAsync(credentials, $"chmod +x {remoteScriptPath}", Log);
                     // --- 阶段 4: 状态机执行循环 ---
                     bool isSuccess = false;
                     int maxAttempts = 3;
 
                     for (int attempt = 1; attempt <= maxAttempts; attempt++)
                     {
-                        if (ct.IsCancellationRequested) return "Cancelled";
+                        if (ct.IsCancellationRequested) return Properties.Resources.Msg_Gpu_Cancelled;
 
                         bool rebootNeeded = false;
                         string graphicsArg = credentials.InstallGraphics ? "true" : "false";
-                        string proxyArg = credentials.UseProxy ? $"\"http://{credentials.ProxyHost}:{credentials.ProxyPort}\"" : "\"\"";
+                        // 代理地址单引号包裹 + 转义,防 ProxyHost 含 $()/反引号注入(与上面密码同款转义);正常主机名行为等价
+                        string proxyArg = credentials.UseProxy ? $"'http://{credentials.ProxyHost.Replace("'", "'\\''")}:{credentials.ProxyPort}'" : "\"\"";
 
                         // 使用 sudo -E 保证代理变量能传递给 apt
                         string execCmd = $"echo '{credentials.Password.Replace("'", "'\\''")}' | sudo -S -E -p '' bash {remoteScriptPath} deploy {graphicsArg} {proxyArg}";
 
-                        Log($"[Attempt {attempt}] Executing script...");
+                        Log(string.Format(Properties.Resources.Log_Gpu_ExecutingAttempt, attempt));
 
-                        await sshService.ExecuteCommandAndCaptureOutputAsync(credentials, execCmd, line =>
+                        await SshService.ExecuteCommandAndCaptureOutputAsync(credentials, execCmd, line =>
                         {
                             Log(line);
                             if (line.Contains("[STATUS: SUCCESS]")) isSuccess = true;
@@ -1266,24 +1313,24 @@ namespace ExHyperV.Services
 
                         if (rebootNeeded)
                         {
-                            Log("!!! VM Reboot required. Restarting now...");
-                            await _powerService.ExecuteControlActionAsync(vmName, "Restart");
+                            Log(Properties.Resources.Log_Gpu_RebootRequired);
+                            await VmPowerService.ExecuteControlActionAsync(vmName, "Restart");
                             await Task.Delay(10000); // 等待开始关机
                             if (!await WaitForVmToBeResponsiveAsync(credentials.Host, credentials.Port, ct))
-                                return "VM failed to come back online after reboot.";
+                                return Properties.Resources.Error_Gpu_RebootNoResponse;
 
-                            Log("VM is back online. Resuming deployment...");
+                            Log(Properties.Resources.Log_Gpu_VmBackOnline);
                             continue; // 重新进入循环执行同一脚本
                         }
 
                         // 如果既没成功也没重启信号，通常是脚本内部报错 set -e 触发了
-                        if (!isSuccess) return "Script execution failed (no success signal).";
+                        if (!isSuccess) return Properties.Resources.Error_Gpu_ScriptNoSuccess;
                     }
 
-                    return isSuccess ? "OK" : "Maximum reboot attempts reached.";
+                    return isSuccess ? "OK" : Properties.Resources.Error_Gpu_MaxReboots;
 
                 }
-                catch (Exception ex) { return $"Error: {ex.Message}"; }
+                catch (Exception ex) { return string.Format(Properties.Resources.Error_Gpu_LinuxGeneric, ex.Message); }
             });
         }
         #endregion

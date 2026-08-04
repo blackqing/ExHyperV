@@ -14,7 +14,6 @@
              d:DataContext="{d:DesignInstance vm:VirtualMachinesPageViewModel}">
 
     <UserControl.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
     </UserControl.Resources>
 
     <Grid Margin="24">
@@ -33,7 +32,7 @@
                        Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <!-- ✅ 重置/重试按钮：随时重置整个流程 -->
+                <!-- 重置/重试按钮：随时重置整个流程 -->
                 <ui:Button Appearance="Transparent" Padding="8" Margin="0,0,4,0"
                            ToolTip="{x:Static properties:Resources.VmAddGpuProgress_ResetDeployment}"
                            Command="{Binding ResetGpuDeploymentCommand}">
@@ -47,7 +46,7 @@
         </Grid>
 
         <!-- 2. 主滚动区域 -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" PanningMode="VerticalOnly">
             <StackPanel Margin="0,0,12,0">
 
                 <!-- 任务清单 -->
@@ -103,12 +102,12 @@
                 </ItemsControl>
 
 
-                <!-- ✅ 交互层：分区选择/SSH 面板 -->
+                <!-- 交互层：分区选择/SSH 面板 -->
                 <ui:Card Margin="0,16,0,0" Padding="0" 
                          Visibility="{Binding ShowPartitionSelector, Converter={StaticResource BoolToVis}}">
                     <Grid>
                         <!-- 1. 分区列表界面 -->
-                        <Grid x:Name="PartitionListGrid">
+                        <Grid>
                             <Grid.Style>
                                 <Style TargetType="Grid">
                                     <Setter Property="Visibility" Value="Visible"/>
@@ -152,7 +151,7 @@
                         </Grid>
 
                         <!-- 2. SSH 凭据表单界面 -->
-                        <Border x:Name="SshFormBorder" Padding="24">
+                        <Border Padding="24">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Collapsed"/>

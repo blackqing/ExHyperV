@@ -64,13 +64,13 @@ namespace ExHyperV.Models
         /// WMI 实例的唯一标识符 (InstanceID)。
         /// </summary>
         [ObservableProperty]
-        private string _id;
+        private string _id = string.Empty;
 
         /// <summary>
         /// 用户在 Hyper-V 中设置的适配器名称 (ElementName)。
         /// </summary>
         [ObservableProperty]
-        private string _name;
+        private string _name = string.Empty;
 
         /// <summary>
         /// 指示网卡是否已连接（模拟网线插拔）。
@@ -89,7 +89,7 @@ namespace ExHyperV.Models
             get => _switchName;
             set
             {
-                // 核心铁律：如果内存里已经是真实的交换机名，绝对拒绝“空值”或“错误占位符”的覆盖
+                // 内存里已是真实交换机名时，拒绝空值或错误占位符的覆盖
                 if (!string.IsNullOrEmpty(_switchName) && _switchName != Properties.Resources.Status_Unconnected)
                 {
                     // 如果新值是空的、未连接、或者带 WMI_ 前缀的错误，直接丢弃，保留旧值
@@ -112,7 +112,7 @@ namespace ExHyperV.Models
         /// 网卡的 MAC 地址。
         /// </summary>
         [ObservableProperty]
-        private string _macAddress;
+        private string _macAddress = string.Empty;
 
         /// <summary>
         /// 指示 MAC 地址是否为静态配置。
@@ -126,7 +126,7 @@ namespace ExHyperV.Models
         /// WMI: Msvm_EthernetPortAllocationSettingData.TestReplicaSwitchName
         /// </summary>
         [ObservableProperty]
-        private string _testReplicaSwitchName;
+        private string _testReplicaSwitchName = string.Empty;
 
         /// <summary>
         /// 指示此网络适配器是否受故障转移群集监控。
@@ -336,15 +336,5 @@ namespace ExHyperV.Models
         private ulong _bandwidthLimit;
 
 
-        // ==========================================
-        // 7. 访问控制列表 (ACLs - Port Firewall)
-        // (数据源: Msvm_EthernetSwitchPortAclSettingData)
-        // ==========================================
-
-        /// <summary>
-        /// 应用于此端口的访问控制规则列表。
-        /// </summary>
-        [ObservableProperty]
-        private List<NetworkAclRule> _aclRules = new List<NetworkAclRule>();
     }
 }

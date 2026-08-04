@@ -1,35 +1,29 @@
-﻿using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ExHyperV.Interaction;
 using ExHyperV.Services;
 using ExHyperV.Tools;
 using ExHyperV.Views;
-using System.Windows;
 
 namespace ExHyperV.ViewModels
 {
-    public partial class MainPageViewModel : ObservableObject
+    public partial class MainPageViewModel : PageViewModelBase
     {
         [ObservableProperty] private string? _caption;
         [ObservableProperty] private string? _oSArchitecture;
         [ObservableProperty] private string? _cpuModel;
         [ObservableProperty] private string? _memCap;
         [ObservableProperty] private string? _appVersion;
-        [ObservableProperty] private string? _author;
-        [ObservableProperty] private string? _buildDate;
 
         public MainPageViewModel()
         {
             AppVersion = AppInfoService.Version;
-            Author = AppInfoService.Author;
-            BuildDate = AppInfoService.BuildTime.ToString("yyyy/MM/dd HH:mm", CultureInfo.InvariantCulture);
-            _ = LoadSystemInfoAsync();
+            LoadSystemInfoAsync().SafeFireAndForget();
         }
 
         private async Task LoadSystemInfoAsync()
         {
-            var info = await new SystemInfoService().GetSystemInfoAsync();
+            var info = await SystemInfoService.GetSystemInfoAsync();
             Caption = info.Caption;
             OSArchitecture = info.OSArchitecture;
             CpuModel = info.CpuModel;

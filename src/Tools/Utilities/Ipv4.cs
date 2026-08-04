@@ -17,7 +17,10 @@ namespace ExHyperV.Tools
                 .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(NormalizeCandidate)
                 .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
-                .Select(candidate => IPAddress.TryParse(candidate, out var addr) && addr.AddressFamily == AddressFamily.InterNetwork ? addr : null)
+                // TryParse 沿用 inet_aton 老语义,"192.168.1"、"10" 等简写会被解析成别的地址;回写与输入一致才收
+                .Select(candidate => IPAddress.TryParse(candidate, out var addr)
+                                     && addr.AddressFamily == AddressFamily.InterNetwork
+                                     && addr.ToString() == candidate ? addr : null)
                 .Where(addr => addr != null)
                 .Cast<IPAddress>()
                 .Distinct()

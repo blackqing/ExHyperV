@@ -5,7 +5,7 @@ using ExHyperV.Tools;
 
 namespace ExHyperV.Services
 {
-    public class HyperVSwitchService
+    public static class HyperVSwitchService
     {
         // ── VM 适配器查询 ─────────────────────────────────────────────────
         private static async Task<List<AdapterInfo>> GetVmAdaptersOnSwitchAsync(string switchGuid, string switchName)
@@ -85,7 +85,7 @@ namespace ExHyperV.Services
                         if (string.IsNullOrEmpty(vmName)) return null;
 
                         string ipAddresses = await VmIpService.Lookup(vmName, rawMac);
-                        return (AdapterInfo?)new AdapterInfo(vmName, mac, "Unknown", ipAddresses);
+                        return (AdapterInfo?)new AdapterInfo { Name = vmName, MacAddress = mac, IpAddress = Ipv4.SelectBest(ipAddresses) };
                     }
                     catch (Exception ex)
                     {
@@ -115,18 +115,12 @@ namespace ExHyperV.Services
             string cleanMac = rawMac.ToUpper();
             string ipAddresses = string.Empty;
             var adapterResp = await WmiApi.QueryCimAsync(
-                $"SELECT InterfaceIndex, Status FROM MSFT_NetAdapter WHERE PermanentAddress = '{cleanMac}'",
-                obj => new
-                {
-                    Index = obj["InterfaceIndex"]?.ToString() ?? string.Empty,
-                    Status = obj["Status"]?.ToString() ?? string.Empty
-                },
+                $"SELECT InterfaceIndex FROM MSFT_NetAdapter WHERE PermanentAddress = '{cleanMac}'",
+                obj => obj["InterfaceIndex"]?.ToString() ?? string.Empty,
                 WmiScope.StdCimV2);
-            string status = "Unknown";
             if (adapterResp.Success && adapterResp.Data?.Count > 0)
             {
-                status = adapterResp.Data[0].Status;
-                string ifIndex = adapterResp.Data[0].Index;
+                string ifIndex = adapterResp.Data[0];
                 if (!string.IsNullOrEmpty(ifIndex))
                 {
                     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -147,14 +141,17 @@ namespace ExHyperV.Services
                     }
                 }
             }
-            return new AdapterInfo(
-                ExHyperV.Properties.Resources.DisplayName_HostManagementOS,
-                mac, status, ipAddresses);
+            return new AdapterInfo
+            {
+                Name = Properties.Resources.DisplayName_HostManagementOS,
+                MacAddress = mac,
+                IpAddress = Ipv4.SelectBest(ipAddresses)
+            };
         }
         // ══════════════════════════════════════════════════════════════════
         //  GetNetworkInfoAsync — WmiApi
         // ══════════════════════════════════════════════════════════════════
-        public async Task<(List<SwitchInfo> Switches, List<PhysicalAdapterInfo> PhysicalAdapters)> GetNetworkInfoAsync()
+        public static async Task<(List<SwitchInfo> Switches, List<string> PhysicalAdapters)> GetNetworkInfoAsync()
         {
             try
             {
@@ -171,27 +168,61 @@ namespace ExHyperV.Services
         }
 
         // ── 物理网卡列表 ─────────────────────────────────────────────────
-        private static async Task<List<PhysicalAdapterInfo>> GetPhysicalAdaptersAsync()
+        private static async Task<List<string>> GetPhysicalAdaptersAsync()
         {
+            // 同一物理网卡(尤其蜂窝模组/WiFi)会暴露多个共用同一 InterfaceDescription 的 NDIS 接口,
+            // 含 InterfaceOperationalStatus=6(NotPresent)的占位接口;它们 ConnectorPresent 也都是 TRUE
+            // (同一块物理硬件),只按 ConnectorPresent 过滤会重复 N 次。实测:arm64/Surface 5G 模组 11+WiFi 4 = 15
+            // 个接口收敛为 2 块物理设备;x64 单接口网卡分组后不变(零影响)。故按物理设备(PnPDeviceID)去重、
+            // 每块取 OperStatus 最优(Up=1 < Down=2 < NotPresent=6)的接口描述。
             var response = await WmiApi.QueryCimAsync(
-                "SELECT InterfaceDescription FROM MSFT_NetAdapter WHERE ConnectorPresent = TRUE",
-                obj => new PhysicalAdapterInfo(
-                    obj["InterfaceDescription"]?.ToString() ?? string.Empty),
+                "SELECT InterfaceDescription, PnPDeviceID, InterfaceOperationalStatus FROM MSFT_NetAdapter WHERE ConnectorPresent = TRUE",
+                obj => (
+                    Desc: obj["InterfaceDescription"]?.ToString() ?? string.Empty,
+                    Pnp: obj["PnPDeviceID"]?.ToString() ?? string.Empty,
+                    Oper: Convert.ToInt32(obj["InterfaceOperationalStatus"] ?? 0)
+                ),
                 WmiScope.StdCimV2);
 
             if (!response.Success)
             {
                 Debug.WriteLine($"[NetworkService] GetPhysicalAdapters WMI error: {response.Error}");
-                return new List<PhysicalAdapterInfo>();
+                return new List<string>();
             }
 
-            return (response.Data ?? new List<PhysicalAdapterInfo>())
-                .Where(a => !string.IsNullOrWhiteSpace(a.InterfaceDescription))
+            return (response.Data ?? new())
+                .Where(a => !string.IsNullOrWhiteSpace(a.Desc) && !string.IsNullOrWhiteSpace(a.Pnp))
+                .GroupBy(a => a.Pnp)
+                .Select(g => g.OrderBy(a => a.Oper).First().Desc)
                 .ToList();
         }
 
+        /// <summary>
+        /// 可桥接的物理网卡(外部/桥接交换机用):Hyper-V 认的 Msvm_ExternalEthernetPort(有线)+
+        /// Msvm_WiFiPort(WiFi)的 Name,与真实物理网卡(GetPhysicalAdapters)的交集。
+        /// 蜂窝/WWAN 两类端口皆无(点对点接口不支持二层桥接)→ 自然排除;调试网卡等非物理项也被交集滤掉。
+        /// </summary>
+        public static async Task<List<string>> GetBridgeableAdaptersAsync()
+        {
+            var ethResp = await WmiApi.QueryAsync(
+                "SELECT Name FROM Msvm_ExternalEthernetPort",
+                obj => obj["Name"]?.ToString() ?? string.Empty, WmiScope.HyperV);
+            var wifiResp = await WmiApi.QueryAsync(
+                "SELECT Name FROM Msvm_WiFiPort",
+                obj => obj["Name"]?.ToString() ?? string.Empty, WmiScope.HyperV);
+
+            var bridgeable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (ethResp.Success && ethResp.Data != null)
+                foreach (var n in ethResp.Data) if (!string.IsNullOrEmpty(n)) bridgeable.Add(n);
+            if (wifiResp.Success && wifiResp.Data != null)
+                foreach (var n in wifiResp.Data) if (!string.IsNullOrEmpty(n)) bridgeable.Add(n);
+
+            var physical = await GetPhysicalAdaptersAsync();
+            return physical.Where(p => bridgeable.Contains(p)).ToList();
+        }
+
         // ── 虚拟交换机列表 ───────────────────────────────────────────────
-        private async Task<List<SwitchInfo>> GetSwitchListAsync()
+        private static async Task<List<SwitchInfo>> GetSwitchListAsync()
         {
             var switchObjects = await WmiApi.QueryAsync(
                 "SELECT * FROM Msvm_VirtualEthernetSwitch",
@@ -213,7 +244,7 @@ namespace ExHyperV.Services
             return results.Where(s => s != null).Cast<SwitchInfo>().ToList();
         }
 
-        private async Task<SwitchInfo?> ParseSwitchInfoAsync(ManagementObject switchObj)
+        private static async Task<SwitchInfo?> ParseSwitchInfoAsync(ManagementObject switchObj)
         {
             string switchName = switchObj["ElementName"]?.ToString() ?? string.Empty;
             if (string.IsNullOrEmpty(switchName)) return null;
@@ -270,7 +301,7 @@ namespace ExHyperV.Services
                 }
             }
 
-            string switchType = hasExternal ? "External" : hasInternal ? "Internal" : "Private";
+            SwitchMode switchType = hasExternal ? SwitchMode.Bridge : SwitchMode.Isolated;
             bool allowManagementOS = hasInternal;
 
             string interfaceDescription = string.Empty;
@@ -281,19 +312,21 @@ namespace ExHyperV.Services
             var icsResponse = ComApi.GetIcsSourceAdapter(switchName);
             if (icsResponse.Success && icsResponse.Data != null)
             {
-                switchType = "NAT";
+                switchType = SwitchMode.NAT;
                 // GetIcsSourceAdapter 返回适配器显示名（如 "WLAN"），转换为 InterfaceDescription
                 interfaceDescription = await ResolveInterfaceDescriptionAsync(icsResponse.Data);
                 if (string.IsNullOrEmpty(interfaceDescription))
                     interfaceDescription = icsResponse.Data;
             }
 
-            return new SwitchInfo(
-                switchName,
-                switchType,
-                allowManagementOS.ToString(),
-                string.IsNullOrEmpty(switchId) ? switchGuid : switchId,
-                interfaceDescription);
+            return new SwitchInfo
+            {
+                SwitchName = switchName,
+                SwitchType = switchType,
+                AllowManagementOS = allowManagementOS,
+                Id = string.IsNullOrEmpty(switchId) ? switchGuid : switchId,
+                NetAdapterInterfaceDescription = interfaceDescription
+            };
         }
 
         private enum PortConnectionKind { Nothing, Internal, External, VirtualMachine }
@@ -357,27 +390,27 @@ namespace ExHyperV.Services
         // ══════════════════════════════════════════════════════════════════
         //  CreateSwitchAsync — WmiApi
         // ══════════════════════════════════════════════════════════════════
-        public async Task CreateSwitchAsync(string name, string type, string? adapterDescription)
+        public static async Task CreateSwitchAsync(string name, SwitchMode mode, string? adapterDescription)
         {
             try
             {
-                switch (type.ToUpper())
+                switch (mode)
                 {
-                    case "EXTERNAL":
+                    case SwitchMode.Bridge:
                         if (string.IsNullOrEmpty(adapterDescription))
                             throw new ArgumentException(Properties.Resources.Error_ExternalSwitchRequiresPhysicalAdapter);
-                        // External Switch 不预加 Internal 端口，避免产生 vEthernet ()
-                        // 用户可通过 Host Connection 开关事后开启
+                        // 桥接：外部端口 + 主机管理端口都加，宿主与虚拟机一同接入该外部交换机
+                        // (会生成 vEthernet (交换机名) 主机网卡；桥接下主机连接固定开启，无单独开关)
                         await CreateSwitchWmiAsync(name, isExternal: true, adapterDescription, allowManagementOS: true);
                         break;
 
-                    case "NAT":
+                    case SwitchMode.NAT:
                         await CreateSwitchWmiAsync(name, isExternal: false, null, allowManagementOS: true);
                         await Task.Delay(3000);
-                        await UpdateSwitchConfigurationAsync(name, "NAT", adapterDescription, true, true);
+                        await UpdateSwitchConfigurationAsync(name, SwitchMode.NAT, adapterDescription, true);
                         break;
 
-                    case "INTERNAL":
+                    case SwitchMode.Isolated:
                     default:
                         await CreateSwitchWmiAsync(name, isExternal: false, null, allowManagementOS: true);
                         break;
@@ -391,8 +424,10 @@ namespace ExHyperV.Services
             }
         }
 
-        private static async Task CreateSwitchWmiAsync(
-            string name, bool isExternal, string? adapterInterfaceDescription, bool allowManagementOS)
+        // 整体放进 Task.Run：首个 await 前的同步 WMI(GetManagementScope/ManagementClass.CreateInstance)及
+        // GetHostComputerSystemPath(searcher.Get) 都在调用线程；新建交换机从 UI 线程 await 调到会卡。
+        private static Task CreateSwitchWmiAsync(
+            string name, bool isExternal, string? adapterInterfaceDescription, bool allowManagementOS) => Task.Run(async () =>
         {
             var ms = WmiConnectionCache.GetManagementScope(WmiScope.HyperV, WmiContext.Local);
 
@@ -464,23 +499,21 @@ namespace ExHyperV.Services
                 if (!addResult.Success)
                     throw new InvalidOperationException(addResult.Error);
             }
-            else
-            {
-            }
-        }
+        });
 
         // ══════════════════════════════════════════════════════════════════
         //  DeleteSwitchAsync — WmiApi + ComApi
         // ══════════════════════════════════════════════════════════════════
-        public async Task DeleteSwitchAsync(string switchName)
+        public static async Task DeleteSwitchAsync(string switchName)
         {
             try
             {
-                // ICS 清理加超时保护，避免桥接状态下枚举网络连接卡死
-                var icsTask = ComApi.DisableAllIcsSharingAsync();
+                // 仅当被删交换机自身配了 ICS(NAT)时才清理；超时保护避免枚举网络连接卡死
+                // (无条件 DisableAll 会连带关掉别的 NAT 交换机——ICS 全局只有一份共享)
+                var icsTask = DisableIcsIfPresentAsync(switchName);
                 await Task.WhenAny(icsTask, Task.Delay(5000));
                 if (!icsTask.IsCompleted)
-                    Debug.WriteLine("[DeleteSwitch] DisableAllIcsSharing timeout, continuing anyway.");
+                    Debug.WriteLine("[DeleteSwitch] ICS cleanup timeout, continuing anyway.");
 
                 var switchResp = await WmiApi.QueryAsync(
                     $"SELECT * FROM Msvm_VirtualEthernetSwitch WHERE ElementName = '{WmiApi.Escape(switchName)}'",
@@ -510,19 +543,19 @@ namespace ExHyperV.Services
         // ══════════════════════════════════════════════════════════════════
         //  UpdateSwitchConfigurationAsync — WmiApi + ComApi
         // ══════════════════════════════════════════════════════════════════
-        public async Task UpdateSwitchConfigurationAsync(
-            string switchName, string mode, string? adapterDescription,
-            bool allowManagementOS, bool enableDhcp)
+        public static async Task UpdateSwitchConfigurationAsync(
+            string switchName, SwitchMode mode, string? adapterDescription,
+            bool allowManagementOS)
         {
             switch (mode)
             {
-                case "Bridge":
+                case SwitchMode.Bridge:
                     await SetBridgeModeAsync(switchName, adapterDescription, allowManagementOS);
                     break;
-                case "NAT":
+                case SwitchMode.NAT:
                     await SetNatModeAsync(switchName, adapterDescription);
                     break;
-                case "Isolated":
+                case SwitchMode.Isolated:
                     await SetIsolatedModeAsync(switchName, allowManagementOS);
                     break;
                 default:
@@ -531,12 +564,22 @@ namespace ExHyperV.Services
             }
         }
 
-        private async Task SetBridgeModeAsync(string switchName, string? adapterDescription, bool allowManagementOS = true)
+        // 仅当本交换机当前确实配了 ICS(即它就是那台 NAT 交换机)时才清理。
+        // ICS 全局只有一份共享,无条件 DisableAll 会把别的 NAT 交换机也一并关掉;
+        // 判断复用工具自身的 NAT 检测函数 GetIcsSourceAdapter。
+        private static async Task DisableIcsIfPresentAsync(string switchName)
+        {
+            var ics = await ComApi.GetIcsSourceAdapterAsync(switchName);
+            if (ics.Success && ics.Data != null)
+                await ComApi.DisableAllIcsSharingAsync();
+        }
+
+        private static async Task SetBridgeModeAsync(string switchName, string? adapterDescription, bool allowManagementOS = true)
         {
             if (string.IsNullOrEmpty(adapterDescription))
                 throw new ArgumentException("Bridge mode requires a physical adapter.");
 
-            await ComApi.DisableAllIcsSharingAsync();
+            await DisableIcsIfPresentAsync(switchName);
 
             var ms = WmiConnectionCache.GetManagementScope(WmiScope.HyperV, WmiContext.Local);
             using var switchObj = await GetSwitchObjectAsync(switchName);
@@ -581,7 +624,7 @@ namespace ExHyperV.Services
             if (!result.Success) throw new InvalidOperationException(result.Error);
         }
 
-        private async Task SetNatModeAsync(string switchName, string? adapterDescription)
+        private static async Task SetNatModeAsync(string switchName, string? adapterDescription)
         {
             if (string.IsNullOrEmpty(adapterDescription))
                 throw new ArgumentException("NAT mode requires a physical adapter.");
@@ -590,7 +633,8 @@ namespace ExHyperV.Services
             using var switchObj = await GetSwitchObjectAsync(switchName);
             await EnsureInternalModeAsync(switchObj, ms, switchName);
 
-            await ComApi.DisableAllIcsSharingAsync();
+            // 不在此先全局清场：清除由 EnableIcsSharing 内部在两个目标确认存在后执行——
+            // 先清后验会在 vEthernet 未就绪等失败场景下白白关掉现有 NAT(可能属于别的交换机)且无法恢复。
 
             string vEthernetName = $"vEthernet ({switchName})";
             string physicalAdapterName = await ResolveAdapterNameAsync(adapterDescription);
@@ -599,12 +643,12 @@ namespace ExHyperV.Services
             if (!icsResult.Success) throw new InvalidOperationException(icsResult.Error);
         }
 
-        private async Task SetIsolatedModeAsync(string switchName, bool allowManagementOS)
+        private static async Task SetIsolatedModeAsync(string switchName, bool allowManagementOS)
         {
             var ms = WmiConnectionCache.GetManagementScope(WmiScope.HyperV, WmiContext.Local);
             using var switchObj = await GetSwitchObjectAsync(switchName);
             await EnsureInternalModeAsync(switchObj, ms, switchName);
-            await ComApi.DisableAllIcsSharingAsync();
+            await DisableIcsIfPresentAsync(switchName);
 
             bool hasInternal = await HasInternalPortAsync(switchObj);
 
@@ -819,7 +863,7 @@ namespace ExHyperV.Services
         {
             // 宿主机的 Msvm_ComputerSystem 用 Name = 主机名 查询（非虚拟机）
             // Caption = "Hosting Computer System" 是另一个可靠的过滤条件
-            string hostName = System.Environment.MachineName;
+            string hostName = WmiApi.Escape(System.Environment.MachineName);
             using var searcher = new ManagementObjectSearcher(ms,
                 new ObjectQuery($"SELECT * FROM Msvm_ComputerSystem WHERE Name = '{hostName}'"));
             using var col = searcher.Get();
@@ -829,20 +873,32 @@ namespace ExHyperV.Services
 
         private static async Task<string> ResolveAdapterNameAsync(string interfaceDescription)
         {
-            string safe = interfaceDescription.Replace("'", "\\'");
             var resp = await WmiApi.QueryCimAsync(
-                $"SELECT Name FROM MSFT_NetAdapter WHERE InterfaceDescription = '{safe}'",
-                obj => obj["Name"]?.ToString() ?? string.Empty,
+                $"SELECT Name, InterfaceOperationalStatus FROM MSFT_NetAdapter WHERE InterfaceDescription = '{WmiApi.Escape(interfaceDescription)}'",
+                obj => (
+                    Name: obj["Name"]?.ToString() ?? string.Empty,
+                    Oper: Convert.ToInt32(obj["InterfaceOperationalStatus"] ?? 0)
+                ),
                 WmiScope.StdCimV2);
 
-            return (resp.Success && resp.Data?.Count > 0 && !string.IsNullOrEmpty(resp.Data[0]))
-                ? resp.Data[0] : interfaceDescription;
+            // 同描述名多接口(蜂窝/WiFi)会返回多行,取 OperStatus 最优(Up=1 < Down=2 < NotPresent=6)的
+            // 连接态接口名——否则取到 Data[0] 可能是 NotPresent 幽灵接口(HNetCfg 里不存在,ICS EnableSharing 会失败)。
+            if (resp.Success && resp.Data != null)
+            {
+                string best = resp.Data
+                    .Where(a => !string.IsNullOrEmpty(a.Name))
+                    .OrderBy(a => a.Oper)
+                    .Select(a => a.Name)
+                    .FirstOrDefault() ?? string.Empty;
+                if (!string.IsNullOrEmpty(best)) return best;
+            }
+            return interfaceDescription;
         }
 
         // ══════════════════════════════════════════════════════════════════
         //  GetFullSwitchNetworkStateAsync — WmiApi + CimApi
         // ══════════════════════════════════════════════════════════════════
-        public async Task<List<AdapterInfo>> GetFullSwitchNetworkStateAsync(string switchName)
+        public static async Task<List<AdapterInfo>> GetFullSwitchNetworkStateAsync(string switchName)
         {
             try
             {

@@ -6,13 +6,13 @@ using ExHyperV.Tools;
 
 namespace ExHyperV.Services
 {
-    public class VmStorageService
+    public static class VmStorageService
     {
         // ============================================================
-        // 核心数据查询
+        // 数据查询
         // ============================================================
 
-        public async Task LoadVmStorageItemsAsync(VmInstance vm)
+        public static async Task LoadVmStorageItemsAsync(VmInstance vm)
         {
             if (vm == null) return;
 
@@ -46,9 +46,14 @@ namespace ExHyperV.Services
             if (!rasdResp.Success || !sasdResp.Success) return;
 
             var allResources = rasdResp.Data!.Concat(sasdResp.Data!).ToList();
-            Dictionary<string, int>? hvDiskMap = null;
-            Dictionary<int, HostDiskInfoCache>? osDiskMap = null;
-            var items = BuildStorageItems(allResources, ref hvDiskMap, ref osDiskMap);
+            // BuildStorageItems→BuildDiskMaps 内含同步 WMI(.GetAwaiter().GetResult())，挪线程池，别在 UI 线程跑。
+            // ref 局部声明在 lambda 内规避"ref 变量不能被闭包捕获"。
+            var items = await Task.Run(() =>
+            {
+                Dictionary<string, int>? hvDiskMap = null;
+                Dictionary<int, HostDiskInfoCache>? osDiskMap = null;
+                return BuildStorageItems(allResources, ref hvDiskMap, ref osDiskMap);
+            });
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
                 vm.StorageItems.Clear();
@@ -62,7 +67,41 @@ namespace ExHyperV.Services
             });
         }
 
-        private List<VmStorageItem> BuildStorageItems(
+        // 该 VM 悬空的直通物理硬盘(HostResource 钉的盘已从可直通池 Msvm_DiskDrive 消失——被拔出/联机)。
+        // 无副作用(不动 vm.StorageItems)，复用 BuildStorageItems 的 stale 检测，供开机失败反应式清理用。
+        public static async Task<List<VmStorageItem>> FindStalePassthroughDisksAsync(string vmName)
+        {
+            var empty = new List<VmStorageItem>();
+            if (string.IsNullOrEmpty(vmName)) return empty;
+
+            var resp = await WmiApi.WithFirstAsync(
+                $"SELECT * FROM Msvm_VirtualSystemSettingData " +
+                $"WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
+                async settings =>
+                {
+                    var rasdResp = await WmiApi.QueryRelatedCimAsync(settings, "Msvm_VirtualSystemSettingDataComponent",
+                        "Msvm_ResourceAllocationSettingData", "GroupComponent", "PartComponent", obj => obj, WmiScope.HyperV);
+                    var sasdResp = await WmiApi.QueryRelatedCimAsync(settings, "Msvm_VirtualSystemSettingDataComponent",
+                        "Msvm_StorageAllocationSettingData", "GroupComponent", "PartComponent", obj => obj, WmiScope.HyperV);
+                    return (rasdResp, sasdResp);
+                },
+                WmiScope.HyperV);
+
+            if (!resp.HasData) return empty;
+            var (rasdResp, sasdResp) = resp.Data!;
+            if (!rasdResp.Success || !sasdResp.Success) return empty;
+            var allResources = rasdResp.Data!.Concat(sasdResp.Data!).ToList();
+
+            var items = await Task.Run(() =>
+            {
+                Dictionary<string, int>? hvDiskMap = null;
+                Dictionary<int, HostDiskInfoCache>? osDiskMap = null;
+                return BuildStorageItems(allResources, ref hvDiskMap, ref osDiskMap);
+            });
+            return items.Where(i => i.IsPassthroughStale && i.DiskType == "Physical" && i.DriveType == "HardDisk").ToList();
+        }
+
+        private static List<VmStorageItem> BuildStorageItems(
             List<ManagementObject> allResources,
             ref Dictionary<string, int>? hvDiskMap,
             ref Dictionary<int, HostDiskInfoCache>? osDiskMap)
@@ -163,8 +202,19 @@ namespace ExHyperV.Services
                                     var devMatch = deviceIdRegex.Match(rawPath);
                                     int dNum = -1;
                                     if (devMatch.Success)
-                                        hvDiskMap.TryGetValue(
-                                            devMatch.Groups[1].Value.Replace("\\\\", "\\"), out dNum);
+                                    {
+                                        string devId = devMatch.Groups[1].Value.Replace("\\\\", "\\");
+                                        // hvDiskMap 来自 Msvm_DiskDrive(只含脱机盘)。查得到=盘仍脱机、直通有效;
+                                        // 查不到=盘已被手动联机、从可直通池消失 → 直通【悬空失效】(Hyper-V 显示"找不到"、VM 开机失败)。
+                                        // 悬空时仍从 DeviceID 末尾(…\N)解析盘号(挂载时记录、不随联机变)，用于告诉用户是哪块盘失效——
+                                        // 不能只靠 TryGetValue 的 out：查不到会把 dNum 置 0(默认值)，错映射到磁盘 0(常为系统盘)。
+                                        if (!hvDiskMap.TryGetValue(devId, out dNum))
+                                        {
+                                            driveItem.IsPassthroughStale = true;
+                                            var tail = Regex.Match(devId, @"\\(\d+)$");
+                                            dNum = tail.Success ? int.Parse(tail.Groups[1].Value) : -1;
+                                        }
+                                    }
                                     else if (rawPath.ToUpper().Contains("PHYSICALDRIVE"))
                                     {
                                         var numMatch = Regex.Match(rawPath, @"PHYSICALDRIVE(\d+)",
@@ -173,9 +223,11 @@ namespace ExHyperV.Services
                                             dNum = int.Parse(numMatch.Groups[1].Value);
                                     }
 
+                                    // 悬空且解析不出盘号(NODRIVE)时 dNum=-1，显式落到 DiskNumber：
+                                    // UI 走通用文案，移除时也不会把默认值 0 误当宿主磁盘 0 去联机。
+                                    driveItem.DiskNumber = dNum;
                                     if (dNum != -1)
                                     {
-                                        driveItem.DiskNumber = dNum;
                                         driveItem.PathOrDiskNumber = $"PhysicalDisk{dNum}";
                                         if (osDiskMap != null && osDiskMap.TryGetValue(dNum, out var hostInfo))
                                         {
@@ -217,7 +269,7 @@ namespace ExHyperV.Services
             return resultList;
         }
 
-        private (Dictionary<string, int> hvDiskMap, Dictionary<int, HostDiskInfoCache> osDiskMap)
+        private static (Dictionary<string, int> hvDiskMap, Dictionary<int, HostDiskInfoCache> osDiskMap)
             BuildDiskMaps()
         {
             var hvMap = new Dictionary<string, int>();
@@ -267,7 +319,7 @@ namespace ExHyperV.Services
         // 压缩虚拟磁盘
         // ============================================================
 
-        public async Task<ApiResponse> CompactDiskAsync(string vhdPath)
+        public static async Task<ApiResponse> CompactDiskAsync(string vhdPath)
         {
             return await WmiApi.InvokeAsync(
                 "SELECT * FROM Msvm_ImageManagementService",
@@ -284,65 +336,11 @@ namespace ExHyperV.Services
         // 主机物理磁盘列表
         // ============================================================
 
-        public async Task<ApiResponse<List<HostDiskInfo>>> GetHostDisksAsync()
-        {
-            var usedResp = await WmiApi.QueryAsync(
-                "SELECT DriveNumber FROM Msvm_DiskDrive WHERE DriveNumber >= 0",
-                obj => WmiApi.Prop<int>(obj, "DriveNumber", -1),
-                WmiScope.HyperV);
-
-            var usedDiskNumbers = new HashSet<int>(
-                usedResp.Success && usedResp.Data != null
-                    ? usedResp.Data.Where(n => n >= 0)
-                    : Enumerable.Empty<int>());
-
-            var diskResp = await WmiApi.QueryCimAsync(
-                "SELECT Number, FriendlyName, Size, IsOffline, IsSystem, IsBoot, BusType, OperationalStatus " +
-                "FROM MSFT_Disk",
-                obj =>
-                {
-                    int number = Convert.ToInt32(obj["Number"] ?? -1);
-                    ushort busType = Convert.ToUInt16(obj["BusType"] ?? 0);
-                    bool isSystem = Convert.ToBoolean(obj["IsSystem"] ?? false);
-                    bool isBoot = Convert.ToBoolean(obj["IsBoot"] ?? false);
-                    bool isOffline = Convert.ToBoolean(obj["IsOffline"] ?? false);
-                    long sizeBytes = Convert.ToInt64(obj["Size"] ?? 0L);
-                    string friendlyName = obj["FriendlyName"]?.ToString() ?? "";
-                    var opArr = obj["OperationalStatus"] as ushort[];
-                    string opStatus = opArr?.Length > 0 ? opArr[0].ToString() : "Unknown";
-                    return new { number, busType, isSystem, isBoot, isOffline, sizeBytes, friendlyName, opStatus };
-                },
-                WmiScope.Storage);
-
-            if (!diskResp.Success)
-                return ApiResponse<List<HostDiskInfo>>.Fail(
-                    diskResp.Error, diskResp.Code, diskResp.ErrorSource);
-
-            var result = diskResp.Data!
-                .Where(d => d.number >= 0
-                         && d.busType != 7
-                         && !d.isSystem
-                         && !d.isBoot
-                         && !usedDiskNumbers.Contains(d.number))
-                .Select(d => new HostDiskInfo
-                {
-                    Number = d.number,
-                    FriendlyName = d.friendlyName,
-                    SizeGB = Math.Round(d.sizeBytes / 1073741824.0, 2),
-                    IsOffline = d.isOffline,
-                    IsSystem = d.isSystem,
-                    OperationalStatus = d.opStatus
-                })
-                .ToList();
-
-            return ApiResponse<List<HostDiskInfo>>.Ok(result);
-        }
-
         // ============================================================
         // 刷新虚拟磁盘文件大小
         // ============================================================
 
-        public async Task RefreshVirtualDiskSizesAsync(VmInstance vm)
+        public static async Task RefreshVirtualDiskSizesAsync(VmInstance vm)
         {
             if (vm == null) return;
 
@@ -377,110 +375,16 @@ namespace ExHyperV.Services
         }
 
         // ============================================================
-        // 槽位检测
-        // ============================================================
-
-        public async Task<(string ControllerType, int ControllerNumber, int Location)>
-            GetNextAvailableSlotAsync(string vmName, string driveType)
-        {
-            var vmResp = await WmiApi.QueryFirstAsync(
-                $"SELECT EnabledState FROM Msvm_ComputerSystem WHERE ElementName = '{WmiApi.Escape(vmName)}'",
-                obj => Convert.ToInt32(obj["EnabledState"] ?? 0),
-                WmiScope.HyperV);
-
-            if (!vmResp.HasData) return ("NONE", -1, -1);
-            bool isRunning = (vmResp.Data == 2);
-
-            var settingsResp = await WmiApi.QueryFirstAsync(
-                $"SELECT InstanceID, VirtualSystemSubType FROM Msvm_VirtualSystemSettingData " +
-                $"WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
-                obj => obj,
-                WmiScope.HyperV);
-
-            if (!settingsResp.HasData) return ("NONE", -1, -1);
-
-            // 注意：settingsResp.Data 已被 using 释放，需用 WithFirstAsync
-            return await WmiApi.WithFirstAsync(
-                $"SELECT InstanceID, VirtualSystemSubType FROM Msvm_VirtualSystemSettingData " +
-                $"WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
-                async settings =>
-                {
-                    string subType = settings["VirtualSystemSubType"]?.ToString() ?? "";
-                    bool isGen1 = subType == "Microsoft:Hyper-V:SubType:1";
-                    string settingId = settings["InstanceID"]?.ToString() ?? "";
-
-                    var rasdResp = await WmiApi.QueryAsync(
-                        $"SELECT ResourceType, Address, AddressOnParent, InstanceID, Parent " +
-                        $"FROM Msvm_ResourceAllocationSettingData " +
-                        $"WHERE InstanceID LIKE '{WmiApi.Escape(settingId)}%' " +
-                        $"AND (ResourceType = 5 OR ResourceType = 6 OR ResourceType = 16 OR ResourceType = 17)",
-                        obj => obj,
-                        WmiScope.HyperV);
-
-                    if (!rasdResp.HasData) return ("NONE", -1, -1);
-
-                    var controllers = new List<(string Type, int Number, string InstanceID)>();
-                    var occupiedSlots = new HashSet<string>();
-                    var parentRegex = new Regex("InstanceID=\"([^\"]+)\"", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-                    foreach (var res in rasdResp.Data!)
-                    {
-                        int rt = Convert.ToInt32(res["ResourceType"] ?? 0);
-                        string instanceId = res["InstanceID"]?.ToString() ?? "";
-
-                        if (rt == 5 || rt == 6)
-                        {
-                            string type = rt == 5 ? "IDE" : "SCSI";
-                            int number = Convert.ToInt32(res["Address"] ?? 0);
-                            controllers.Add((type, number, instanceId));
-                        }
-                        else if (rt == 16 || rt == 17)
-                        {
-                            string parentPath = res["Parent"]?.ToString() ?? "";
-                            string addressOnParent = res["AddressOnParent"]?.ToString() ?? "";
-
-                            string parentId = parentPath;
-                            var match = parentRegex.Match(parentPath);
-                            if (match.Success)
-                                parentId = match.Groups[1].Value.Replace("\\\\", "\\");
-
-                            if (int.TryParse(addressOnParent, out int location))
-                                occupiedSlots.Add($"{parentId}|{location}");
-                        }
-                    }
-
-                    if (isGen1 && !isRunning)
-                    {
-                        foreach (var ctrl in controllers.Where(c => c.Type == "IDE").OrderBy(c => c.Number))
-                        {
-                            for (int i = 0; i < 2; i++)
-                                if (!occupiedSlots.Contains($"{ctrl.InstanceID}|{i}"))
-                                    return ("IDE", ctrl.Number, i);
-                        }
-                    }
-
-                    foreach (var ctrl in controllers.Where(c => c.Type == "SCSI").OrderBy(c => c.Number))
-                    {
-                        for (int i = 0; i < 64; i++)
-                            if (!occupiedSlots.Contains($"{ctrl.InstanceID}|{i}"))
-                                return ("SCSI", ctrl.Number, i);
-                    }
-
-                    return ("NONE", -1, -1);
-                },
-                WmiScope.HyperV) is { HasData: true } r ? r.Data! : ("NONE", -1, -1);
-        }
-
-        // ============================================================
         // 设备增删改操作
         // ============================================================
 
-        public async Task<(bool Success, string Message, string ActualType, int ActualNumber, int ActualLocation)>
+        public static async Task<(bool Success, string Message, string ActualType, int ActualNumber, int ActualLocation)>
             AddDriveAsync(
                 string vmName, string controllerType, int controllerNumber, int location, string driveType,
                 string pathOrNumber, bool isPhysical, bool isNew = false, int sizeGb = 256,
                 string vhdType = "Dynamic", string parentPath = "", string sectorFormat = "Default",
-                string blockSize = "Default", string isoSourcePath = null, string isoVolumeLabel = null)
+                string blockSize = "Default", string isoSourcePath = null, string isoVolumeLabel = null,
+                string expectedDiskUniqueId = null, string expectedDiskSerial = null, long expectedDiskSize = 0)
         {
             if (driveType == "DvdDrive" && isNew && !string.IsNullOrWhiteSpace(isoSourcePath))
             {
@@ -489,21 +393,48 @@ namespace ExHyperV.Services
                     return (false, isoResult.Message, controllerType, controllerNumber, location);
             }
 
+            int physicalDiskNumberForRollback = -1;
+            bool physicalStateCaptured = false;
+            bool originalIsOffline = false;
+            bool originalIsReadOnly = false;
+
+            async Task RestorePhysicalDiskStateAsync()
+            {
+                if (!physicalStateCaptured || physicalDiskNumberForRollback < 0) return;
+                await HostDiskService.SetDiskReadOnlyAsync(physicalDiskNumberForRollback, originalIsReadOnly);
+                await HostDiskService.SetDiskOfflineStatusAsync(physicalDiskNumberForRollback, originalIsOffline);
+            }
+
             try
             {
                 using var vmObj = WmiApi.GetVmComputerSystem(vmName);
                 if (vmObj == null)
-                    return (false, $"VM '{vmName}' not found", controllerType, controllerNumber, location);
+                    return (false, string.Format(Properties.Resources.Error_Vm_NotFound, vmName), controllerType, controllerNumber, location);
 
                 int enabledState = WmiApi.Prop<int>(vmObj, "EnabledState", 0);
                 bool isRunning = enabledState == 2;
 
                 using var settings = WmiApi.GetVmSettings(vmObj);
                 if (settings == null)
-                    return (false, "Cannot get VM settings", controllerType, controllerNumber, location);
+                    return (false, Properties.Resources.Error_Vm_GetSettings, controllerType, controllerNumber, location);
 
-                if (controllerType == "IDE" && isRunning && driveType != "DvdDrive")
-                    return (false, "Storage_Error_IdeHotPlugNotSupported", controllerType, controllerNumber, location);
+                // 本次调用累积的副作用，任一步失败由 Fail() 逆序回滚——保证"全有或全无"，不残留控制器/VHD文件/空 slot。
+                var createdControllers = new List<string>();   // 自动补建的 SCSI 控制器(__PATH)
+                string? createdVhd = null;                      // 新建落地的 .vhdx 文件路径
+                bool slotCreated = false;                       // slot 是否已建成
+                string? ctrlInstanceId = null;                  // 选中控制器 InstanceID(回滚定位 slot 用)
+                int slotResourceType = driveType == "DvdDrive" ? 16 : 17;
+
+                async Task<(bool, string, string, int, int)> Fail(string msg)
+                {
+                    await RollbackAddAsync(settings, slotCreated, ctrlInstanceId, location, slotResourceType, createdVhd, createdControllers);
+                    await RestorePhysicalDiskStateAsync();
+                    return (false, msg, controllerType, controllerNumber, location);
+                }
+
+                // 运行中 IDE 不能加任何设备(含光驱,IDE 无热插拔);UI 已前置拦,这里作服务层兜底
+                if (controllerType == "IDE" && isRunning)
+                    return (false, driveType == "DvdDrive" ? Properties.Resources.Error_Storage_Gen1Dvd : Properties.Resources.Error_Storage_IdeHotAdd, controllerType, controllerNumber, location);
 
                 if (controllerType == "SCSI")
                 {
@@ -526,9 +457,10 @@ namespace ExHyperV.Services
                     if (controllerNumber >= scsiCount)
                     {
                         if (isRunning)
-                            return (false, "Storage_Error_ScsiControllerHotAddNotSupported",
+                            return (false, Properties.Resources.Error_Storage_ScsiHotAdd,
                                 controllerType, controllerNumber, location);
 
+                        string? scsiErr = null;
                         for (int i = scsiCount; i <= controllerNumber; i++)
                         {
                             var scsiClass = new ManagementClass(
@@ -552,8 +484,10 @@ namespace ExHyperV.Services
                                 WmiScope.HyperV);
 
                             if (!addScsiResult.Success)
-                                return (false, FriendlyError.LastSentence(addScsiResult.Error),
-                                    controllerType, controllerNumber, location);
+                            {
+                                scsiErr = FriendlyError.LastSentence(addScsiResult.Error);
+                                break;   // 中途失败：跳出，下面统一重查记录已建的控制器再回滚
+                            }
                         }
 
                         allRasdResp = await WmiApi.QueryRelatedAsync(
@@ -569,11 +503,16 @@ namespace ExHyperV.Services
                         scsiCtrlList = (allRasdResp.Data ?? [])
                             .Where(r => r.ResourceType == 6)
                             .ToList();
+
+                        // 末尾新增的即本次补建的控制器(含中途失败前已建成的)，失败时回滚删掉
+                        createdControllers.AddRange(scsiCtrlList.Skip(scsiCount).Select(c => c.ObjPath));
+
+                        if (scsiErr != null)
+                            return await Fail(scsiErr);
                     }
 
                     if (controllerNumber >= scsiCtrlList.Count)
-                        return (false, "Storage_Error_ScsiControllerNotFound",
-                            controllerType, controllerNumber, location);
+                        return await Fail(Properties.Resources.Error_Storage_NoScsi);
                 }
 
                 var ctrlRasdResp = await WmiApi.QueryRelatedAsync(
@@ -589,38 +528,39 @@ namespace ExHyperV.Services
                 string? controllerPath = null;
                 if (controllerType == "IDE")
                 {
-                    controllerPath = ctrlRasdResp.Data?
-                        .FirstOrDefault(r =>
-                        {
-                            if (r.ResourceType != 5) return false;
-                            var segs = r.InstanceID.Split('\\');
-                            return segs.Length >= 1
-                                && int.TryParse(segs[^1], out int n)
-                                && n == controllerNumber;
-                        })
-                        ?.ObjPath;
+                    var ctrl = ctrlRasdResp.Data?.FirstOrDefault(r =>
+                    {
+                        if (r.ResourceType != 5) return false;
+                        var segs = r.InstanceID.Split('\\');
+                        return segs.Length >= 1
+                            && int.TryParse(segs[^1], out int n)
+                            && n == controllerNumber;
+                    });
+                    controllerPath = ctrl?.ObjPath;
+                    ctrlInstanceId = ctrl?.InstanceID;
                 }
                 else
                 {
                     var scsiList = ctrlRasdResp.Data?
                         .Where(r => r.ResourceType == 6)
                         .ToList();
-                    controllerPath = scsiList?.ElementAtOrDefault(controllerNumber)?.ObjPath;
+                    var ctrl = scsiList?.ElementAtOrDefault(controllerNumber);
+                    controllerPath = ctrl?.ObjPath;
+                    ctrlInstanceId = ctrl?.InstanceID;
                 }
 
                 if (controllerPath == null)
-                    return (false, "Storage_Error_ControllerNotFound",
-                        controllerType, controllerNumber, location);
+                    return await Fail(Properties.Resources.Error_Storage_ControllerNotFound);
 
                 if (driveType == "HardDisk" && isNew && !string.IsNullOrWhiteSpace(pathOrNumber))
                 {
                     var createResult = await CreateVhdAsync(
                         pathOrNumber, vhdType, sizeGb, sectorFormat, blockSize, parentPath);
                     if (!createResult.Success)
-                        return (false, createResult.Message, controllerType, controllerNumber, location);
+                        return await Fail(createResult.Message);
+                    createdVhd = pathOrNumber;   // 本次新建落地的文件，后续失败要删掉
                 }
 
-                int slotResourceType = driveType == "DvdDrive" ? 16 : 17;
                 string slotSubType = driveType == "DvdDrive"
                     ? "Microsoft:Hyper-V:Synthetic DVD Drive"
                     : (isPhysical
@@ -630,16 +570,86 @@ namespace ExHyperV.Services
                 string? physicalHostResource = null;
                 if (isPhysical && driveType == "HardDisk")
                 {
-                    var diskDriveResp = await WmiApi.QueryFirstAsync(
-                        $"SELECT * FROM Msvm_DiskDrive WHERE DeviceID LIKE '%\\\\{pathOrNumber}'",
-                        obj => (obj["__PATH"]?.ToString() ?? obj.Path.Path),
+                    if (!int.TryParse(pathOrNumber, out int physicalDiskNumber))
+                        return await Fail(Properties.Resources.Error_Storage_SelectTarget);
+
+                    var stateResp = await WmiApi.QueryFirstCimAsync(
+                        $"SELECT IsSystem, IsBoot, IsOffline, IsReadOnly, UniqueId, SerialNumber, Size FROM MSFT_Disk WHERE Number = {physicalDiskNumber}",
+                        obj => new
+                        {
+                            IsSystem = Convert.ToBoolean(obj["IsSystem"] ?? false),
+                            IsBoot = Convert.ToBoolean(obj["IsBoot"] ?? false),
+                            IsOffline = Convert.ToBoolean(obj["IsOffline"] ?? false),
+                            IsReadOnly = Convert.ToBoolean(obj["IsReadOnly"] ?? false),
+                            UniqueId = obj["UniqueId"]?.ToString() ?? string.Empty,
+                            SerialNumber = obj["SerialNumber"]?.ToString()?.Trim() ?? string.Empty,
+                            Size = Convert.ToInt64(obj["Size"] ?? 0L)
+                        },
+                        WmiScope.Storage);
+
+                    if (!stateResp.HasData || stateResp.Data!.IsSystem || stateResp.Data.IsBoot)
+                        return await Fail(string.Format(Properties.Resources.Error_Storage_PhysDiskNotFound, pathOrNumber));
+
+                    bool identityMatches = !string.IsNullOrWhiteSpace(expectedDiskUniqueId)
+                        ? string.Equals(stateResp.Data.UniqueId, expectedDiskUniqueId, StringComparison.OrdinalIgnoreCase)
+                        : !string.IsNullOrWhiteSpace(expectedDiskSerial)
+                            ? string.Equals(stateResp.Data.SerialNumber, expectedDiskSerial.Trim(), StringComparison.OrdinalIgnoreCase)
+                                && stateResp.Data.Size == expectedDiskSize
+                            : expectedDiskSize <= 0 || stateResp.Data.Size == expectedDiskSize;
+                    if (!identityMatches)
+                        return await Fail(Properties.Resources.Error_Storage_DiskChanged);
+
+                    physicalDiskNumberForRollback = physicalDiskNumber;
+                    originalIsOffline = stateResp.Data.IsOffline;
+                    originalIsReadOnly = stateResp.Data.IsReadOnly;
+                    physicalStateCaptured = true;
+
+                    if (!stateResp.Data.IsOffline)
+                    {
+                        var offlineResult = await HostDiskService.SetDiskOfflineStatusAsync(physicalDiskNumber, true);
+                        if (!offlineResult.Success)
+                            return await Fail(FriendlyError.LastSentence(offlineResult.Error));
+                    }
+
+                    string? diskDrivePath = null;
+                    string? diskDeviceId = null;
+                    for (int attempt = 0; attempt < 20; attempt++)
+                    {
+                        var diskDriveResp = await WmiApi.QueryFirstAsync(
+                            $"SELECT * FROM Msvm_DiskDrive WHERE DriveNumber = {physicalDiskNumber}",
+                            obj => new
+                            {
+                                Path = obj["__PATH"]?.ToString() ?? obj.Path.Path,
+                                DeviceId = obj["DeviceID"]?.ToString() ?? string.Empty
+                            },
+                            WmiScope.HyperV);
+
+                        if (diskDriveResp.HasData)
+                        {
+                            diskDrivePath = diskDriveResp.Data!.Path;
+                            diskDeviceId = diskDriveResp.Data.DeviceId.Replace("\\\\", "\\");
+                            break;
+                        }
+                        await Task.Delay(250);
+                    }
+
+                    if (string.IsNullOrEmpty(diskDrivePath) || string.IsNullOrEmpty(diskDeviceId))
+                        return await Fail(string.Format(Properties.Resources.Error_Storage_PhysDiskNotFound, pathOrNumber));
+
+                    var assignedResp = await WmiApi.QueryAsync(
+                        "SELECT HostResource FROM Msvm_ResourceAllocationSettingData WHERE ResourceSubType = 'Microsoft:Hyper-V:Physical Disk Drive'",
+                        obj => (obj["HostResource"] as string[])?.FirstOrDefault() ?? string.Empty,
                         WmiScope.HyperV);
+                    bool alreadyAssigned = (assignedResp.Data ?? [])
+                        .Where(hr => !string.IsNullOrEmpty(hr))
+                        .Select(hr => System.Text.RegularExpressions.Regex.Match(hr, "DeviceID=\"([^\"]+)\""))
+                        .Any(match => match.Success && string.Equals(
+                            match.Groups[1].Value.Replace("\\\\", "\\"), diskDeviceId,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (alreadyAssigned)
+                        return await Fail(Properties.Resources.Error_Storage_DiskAlreadyAssigned);
 
-                    if (!diskDriveResp.HasData)
-                        return (false, $"Physical disk {pathOrNumber} not found in Hyper-V",
-                            controllerType, controllerNumber, location);
-
-                    physicalHostResource = diskDriveResp.Data!;
+                    physicalHostResource = diskDrivePath;
                 }
 
                 var slotClass = new ManagementClass(
@@ -669,16 +679,18 @@ namespace ExHyperV.Services
                     WmiScope.HyperV);
 
                 if (!addSlotResult.Success)
-                    return (false, FriendlyError.LastSentence(addSlotResult.Error),
-                        controllerType, controllerNumber, location);
+                    return await Fail(FriendlyError.LastSentence(addSlotResult.Error));
 
                 string? slotPath = addSlotResult.Data?.FirstOrDefault();
 
                 if (slotPath == null)
-                    return (false, "Storage_Error_SlotNotFound after AddResourceSettings",
-                        controllerType, controllerNumber, location);
+                    return await Fail(Properties.Resources.Error_Storage_NoSlots);
 
-                bool hasMedia = !isPhysical && !string.IsNullOrWhiteSpace(pathOrNumber);
+                slotCreated = true;
+
+                // 物理光驱直通也走 SASD(HostResource = 宿主光驱 PNPDeviceID)，与挂 ISO 同路径；物理硬盘的 HostResource 在 slot 上、不经此处。
+                bool isPhysicalOptical = isPhysical && driveType == "DvdDrive";
+                bool hasMedia = (!isPhysical || isPhysicalOptical) && !string.IsNullOrWhiteSpace(pathOrNumber);
                 if (hasMedia)
                 {
                     string mediaSubType = driveType == "DvdDrive"
@@ -709,20 +721,78 @@ namespace ExHyperV.Services
                         WmiScope.HyperV);
 
                     if (!addMediaResult.Success)
-                        return (false, FriendlyError.LastSentence(addMediaResult.Error),
-                            controllerType, controllerNumber, location);
+                        return await Fail(FriendlyError.LastSentence(addMediaResult.Error));
                 }
 
-                return (true, "Storage_Msg_Success", controllerType, controllerNumber, location);
+                return (true, string.Empty, controllerType, controllerNumber, location);
             }
             catch (Exception ex)
             {
+                await RestorePhysicalDiskStateAsync();
                 return (false, FriendlyError.LastSentence(ex.Message),
                     controllerType, controllerNumber, location);
             }
         }
 
-        private async Task<(bool Success, string Message)> CreateVhdAsync(
+        // 添加失败的回滚：逆序删除本次调用已建立的副作用（slot → 新建的 .vhdx 文件 → 自动补建的控制器）。
+        // 全程 best-effort（各步独立 try），不让回滚自身失败掩盖原错误。slot 用 InstanceID 段位重新定位（与 RemoveDrive 同款、可靠），
+        // 不依赖 AddResourceSettings 返回的 ResultingResourceSettings 路径（其转义格式未必被 RemoveResourceSettings 接受）。
+        private static async Task RollbackAddAsync(
+            ManagementObject settings, bool slotCreated, string? ctrlInstanceId, int location, int slotResourceType,
+            string? createdVhd, List<string> createdControllers)
+        {
+            if (slotCreated && !string.IsNullOrEmpty(ctrlInstanceId))
+            {
+                try
+                {
+                    var ctrlSegs = ctrlInstanceId.Split('\\');
+                    string ctrlGuid = ctrlSegs.Length >= 2 ? ctrlSegs[^2] : "";
+                    var resp = await WmiApi.QueryRelatedAsync(
+                        settings,
+                        "Msvm_ResourceAllocationSettingData",
+                        obj => new RasdInfo(
+                            obj["InstanceID"]?.ToString() ?? "",
+                            Convert.ToInt32(obj["ResourceType"] ?? 0),
+                            (obj["__PATH"]?.ToString() ?? obj.Path.Path)),
+                        "Msvm_VirtualSystemSettingDataComponent",
+                        WmiScope.HyperV);
+                    var slot = resp.Data?.FirstOrDefault(r =>
+                    {
+                        if (r.ResourceType != slotResourceType) return false;
+                        var segs = r.InstanceID.Split('\\');
+                        return segs.Length >= 5 && segs[^1] == "D" && segs[^4] == ctrlGuid
+                            && int.TryParse(segs[^2], out int cLoc) && cLoc == location;
+                    });
+                    if (slot != null)
+                        await WmiApi.InvokeAsync(
+                            "SELECT * FROM Msvm_VirtualSystemManagementService",
+                            "RemoveResourceSettings",
+                            p => p["ResourceSettings"] = new string[] { slot.ObjPath },
+                            WmiScope.HyperV);
+                }
+                catch { }
+            }
+
+            if (!string.IsNullOrEmpty(createdVhd))
+            {
+                try { if (File.Exists(createdVhd)) File.Delete(createdVhd); } catch { }
+            }
+
+            foreach (var ctrlPath in createdControllers)
+            {
+                try
+                {
+                    await WmiApi.InvokeAsync(
+                        "SELECT * FROM Msvm_VirtualSystemManagementService",
+                        "RemoveResourceSettings",
+                        p => p["ResourceSettings"] = new string[] { ctrlPath },
+                        WmiScope.HyperV);
+                }
+                catch { }
+            }
+        }
+
+        private static async Task<(bool Success, string Message)> CreateVhdAsync(
             string path, string vhdType, int sizeGb,
             string sectorFormat, string blockSize, string parentPathStr)
         {
@@ -793,7 +863,7 @@ namespace ExHyperV.Services
             }
         }
 
-        public async Task<(bool Success, string Message)> RemoveDriveAsync(
+        public static async Task<(bool Success, string Message)> RemoveDriveAsync(
             string vmName, VmStorageItem drive)
         {
             var vmResp = await WmiApi.QueryFirstAsync(
@@ -802,7 +872,7 @@ namespace ExHyperV.Services
                 WmiScope.HyperV);
 
             if (!vmResp.HasData)
-                return (false, $"VM '{vmName}' not found");
+                return (false, string.Format(Properties.Resources.Error_Vm_NotFound, vmName));
 
             bool isRunning = vmResp.Data == 2;
 
@@ -813,23 +883,27 @@ namespace ExHyperV.Services
                 if (drive.DiskType != "Empty" && !string.IsNullOrEmpty(drive.PathOrDiskNumber))
                 {
                     var ejectResult = await ModifyMediaPathAsync(
-                        vmName, drive.ControllerNumber, drive.ControllerLocation,
+                        vmName, drive.ControllerType, drive.ControllerNumber, drive.ControllerLocation,
                         "Microsoft:Hyper-V:Virtual CD/DVD Disk", "");
                     return ejectResult.Success
-                        ? (true, "Storage_Msg_Ejected")
+                        ? (true, Properties.Resources.Msg_Storage_Ejected)
                         : ejectResult;
                 }
 
-                return (false, "Storage_Error_DvdHotRemoveNotSupported");
+                return (false, Properties.Resources.Error_Storage_DvdHotRemove);
             }
+
+            // 运行中不能删 IDE 硬盘(IDE 不支持热插拔)——与添加的 IdeHotAdd 对称
+            if (drive.DriveType == "HardDisk" && isRunning && drive.ControllerType == "IDE")
+                return (false, Properties.Resources.Error_Storage_IdeHotRemove);
 
             using var vmObj = WmiApi.GetVmComputerSystem(vmName);
             if (vmObj == null)
-                return (false, $"VM '{vmName}' not found");
+                return (false, string.Format(Properties.Resources.Error_Vm_NotFound, vmName));
 
             using var settings = WmiApi.GetVmSettings(vmObj);
             if (settings == null)
-                return (false, "Cannot get VM settings");
+                return (false, Properties.Resources.Error_Vm_GetSettings);
 
             var rasdResp = await WmiApi.QueryRelatedAsync(
                 settings,
@@ -842,7 +916,7 @@ namespace ExHyperV.Services
                 WmiScope.HyperV);
 
             if (!rasdResp.Success || rasdResp.Data == null)
-                return (false, rasdResp.Error.Length > 0 ? rasdResp.Error : "Cannot enumerate resources");
+                return (false, rasdResp.Error.Length > 0 ? rasdResp.Error : Properties.Resources.Error_Vm_EnumResources);
 
             int ctrlResourceType = drive.ControllerType == "SCSI" ? 6 : 5;
             var ctrlList = rasdResp.Data
@@ -851,8 +925,8 @@ namespace ExHyperV.Services
 
             if (drive.ControllerNumber >= ctrlList.Count)
                 return (false, drive.DriveType == "DvdDrive"
-                    ? "Storage_Error_DvdDriveNotFound"
-                    : "Storage_Error_DiskNotFound");
+                    ? Properties.Resources.Error_Storage_DvdNotFound
+                    : Properties.Resources.Error_Storage_DiskNotFound);
 
             var ctrlSegs = ctrlList[drive.ControllerNumber].InstanceID.Split('\\');
             string ctrlGuid = ctrlSegs.Length >= 2 ? ctrlSegs[^2] : "";
@@ -867,8 +941,8 @@ namespace ExHyperV.Services
 
             if (slotRasd == null)
                 return (false, drive.DriveType == "DvdDrive"
-                    ? "Storage_Error_DvdDriveNotFound"
-                    : "Storage_Error_DiskNotFound");
+                    ? Properties.Resources.Error_Storage_DvdNotFound
+                    : Properties.Resources.Error_Storage_DiskNotFound);
 
             var mediaInstanceId = slotRasd.InstanceID[..^1] + "L";
             var mediaInstanceIdWql = mediaInstanceId.Replace(@"\", @"\\");
@@ -899,42 +973,47 @@ namespace ExHyperV.Services
             if (!removeResult.Success)
                 return (false, FriendlyError.LastSentence(removeResult.Error));
 
-            if (drive.DiskType == "Physical" && drive.DiskNumber > -1)
+            // 仅物理硬盘直通才需把宿主盘还原上线；物理光驱(DvdDrive)也是 DiskType=="Physical" 但无关联磁盘号(默认 0)，
+            // 不加 DriveType 限定会误把宿主磁盘 0 上线。
+            if (drive.DiskType == "Physical" && drive.DriveType == "HardDisk" && drive.DiskNumber > -1)
             {
                 await Task.Delay(500);
-                await SetDiskOfflineStatusAsync(drive.DiskNumber, false);
+                // Hyper-V 挂 pass-through 物理盘会把宿主盘置为只读(独占保护)；拿回宿主后必须清掉，
+                // 否则宿主看到的是只读盘、无法写(对齐 GPU 直通拿回 VmGpuService 的处理)。
+                await HostDiskService.SetDiskReadOnlyAsync(drive.DiskNumber, false);
+                await HostDiskService.SetDiskOfflineStatusAsync(drive.DiskNumber, false);
             }
 
-            return (true, "Storage_Msg_Removed");
+            return (true, Properties.Resources.Msg_Storage_Removed);
         }
 
-        public async Task<(bool Success, string Message)> ModifyDvdDrivePathAsync(
-            string vmName, int controllerNumber, int controllerLocation, string newIsoPath)
+        public static async Task<(bool Success, string Message)> ModifyDvdDrivePathAsync(
+            string vmName, string controllerType, int controllerNumber, int controllerLocation, string newIsoPath)
         {
             return await ModifyMediaPathAsync(
-                vmName, controllerNumber, controllerLocation,
+                vmName, controllerType, controllerNumber, controllerLocation,
                 "Microsoft:Hyper-V:Virtual CD/DVD Disk", newIsoPath);
         }
 
-        public async Task<(bool Success, string Message)> ModifyHardDrivePathAsync(
+        public static async Task<(bool Success, string Message)> ModifyHardDrivePathAsync(
             string vmName, string controllerType, int controllerNumber, int controllerLocation, string newPath)
         {
             return await ModifyMediaPathAsync(
-                vmName, controllerNumber, controllerLocation,
+                vmName, controllerType, controllerNumber, controllerLocation,
                 "Microsoft:Hyper-V:Virtual Hard Disk", newPath);
         }
 
-        private async Task<(bool Success, string Message)> ModifyMediaPathAsync(
-            string vmName, int controllerNumber, int controllerLocation,
+        private static async Task<(bool Success, string Message)> ModifyMediaPathAsync(
+            string vmName, string controllerType, int controllerNumber, int controllerLocation,
             string resourceSubType, string newPath)
         {
             using var vmObj = WmiApi.GetVmComputerSystem(vmName);
             if (vmObj == null)
-                return (false, $"VM '{vmName}' not found");
+                return (false, string.Format(Properties.Resources.Error_Vm_NotFound, vmName));
 
             using var settings = WmiApi.GetVmSettings(vmObj);
             if (settings == null)
-                return (false, "Cannot get VM settings");
+                return (false, Properties.Resources.Error_Vm_GetSettings);
 
             var sasdResp = await WmiApi.QueryRelatedAsync(
                 settings,
@@ -947,7 +1026,7 @@ namespace ExHyperV.Services
                 "Msvm_VirtualSystemSettingDataComponent");
 
             if (!sasdResp.Success || sasdResp.Data == null)
-                return (false, sasdResp.Error.Length > 0 ? sasdResp.Error : "Cannot enumerate storage resources");
+                return (false, sasdResp.Error.Length > 0 ? sasdResp.Error : Properties.Resources.Error_Vm_EnumResources);
 
             var target = sasdResp.Data.FirstOrDefault(s =>
             {
@@ -959,64 +1038,136 @@ namespace ExHyperV.Services
                     && int.TryParse(segments[^2], out int cLoc) && cLoc == controllerLocation;
             });
 
-            if (target == null)
-                return (false,
-                    $"Storage resource not found: subType={resourceSubType}, " +
-                    $"controller={controllerNumber}, location={controllerLocation}");
-
-            string safeId = target.InstanceID
-                .Replace("'", "\\'")
-                .Replace(@"\", @"\\");
-
-            var result = await WmiApi.WithObjectAsync(
-                wql: $"SELECT * FROM Msvm_StorageAllocationSettingData WHERE InstanceID = '{safeId}'",
-                modifier: obj =>
+            // 已挂着媒体 → 弹出(清空)或换媒体
+            if (target != null)
+            {
+                // 弹出:运行中把 HostResource 改空会被 Hyper-V 拒(报"无法修改资源"/ErrorCode 32773,原生实测)。
+                // 正解=移除媒体那条 SASD → 媒体弹出、驱动器保留(原生实测 RemoveResourceSettings 成功)。
+                if (string.IsNullOrWhiteSpace(newPath))
                 {
-                    obj["HostResource"] = string.IsNullOrWhiteSpace(newPath)
-                        ? new string[0]
-                        : new string[] { newPath };
-                },
-                submitMethod: "ModifyResourceSettings",
-                submitParamName: "ResourceSettings",
-                wrapInArray: true,
-                serviceWql: "SELECT * FROM Msvm_VirtualSystemManagementService");
+                    var mediaPathResp = await WmiApi.QueryFirstAsync(
+                        $"SELECT * FROM Msvm_StorageAllocationSettingData WHERE InstanceID = '{target.InstanceID.Replace(@"\", @"\\")}'",
+                        obj => (obj["__PATH"]?.ToString() ?? obj.Path.Path),
+                        WmiScope.HyperV);
+                    if (!mediaPathResp.HasData)
+                        return (false, Properties.Resources.Error_Storage_DvdNotFound);
 
-            return result.Success
-                ? (true, "Storage_Msg_Success")
-                : (false, FriendlyError.LastSentence(result.Error));
+                    var ejectResult = await WmiApi.InvokeAsync(
+                        "SELECT * FROM Msvm_VirtualSystemManagementService",
+                        "RemoveResourceSettings",
+                        p => p["ResourceSettings"] = new string[] { mediaPathResp.Data! },
+                        WmiScope.HyperV);
+
+                    return ejectResult.Success
+                        ? (true, string.Empty)
+                        : (false, FriendlyError.LastSentence(ejectResult.Error));
+                }
+
+                // 换媒体(插入不同 ISO):改 HostResource
+                string safeId = target.InstanceID
+                    .Replace("'", "\\'")
+                    .Replace(@"\", @"\\");
+
+                var result = await WmiApi.WithObjectAsync(
+                    wql: $"SELECT * FROM Msvm_StorageAllocationSettingData WHERE InstanceID = '{safeId}'",
+                    modifier: obj => { obj["HostResource"] = new string[] { newPath }; },
+                    submitMethod: "ModifyResourceSettings",
+                    submitParamName: "ResourceSettings",
+                    wrapInArray: true,
+                    serviceWql: "SELECT * FROM Msvm_VirtualSystemManagementService");
+
+                return result.Success
+                    ? (true, string.Empty)
+                    : (false, FriendlyError.LastSentence(result.Error));
+            }
+
+            // 空驱动器（slot 在、无 SASD）：清空=无操作；插入新媒体=给现有 slot 新建一个 SASD 挂上（此前直接报"未找到目标存储资源"）。
+            if (string.IsNullOrWhiteSpace(newPath))
+                return (true, string.Empty);
+
+            var rasdResp = await WmiApi.QueryRelatedAsync(
+                settings,
+                "Msvm_ResourceAllocationSettingData",
+                obj => new RasdInfo(
+                    obj["InstanceID"]?.ToString() ?? "",
+                    Convert.ToInt32(obj["ResourceType"] ?? 0),
+                    (obj["__PATH"]?.ToString() ?? obj.Path.Path)),
+                "Msvm_VirtualSystemSettingDataComponent",
+                WmiScope.HyperV);
+
+            if (!rasdResp.Success || rasdResp.Data == null)
+                return (false, rasdResp.Error.Length > 0 ? rasdResp.Error : Properties.Resources.Error_Vm_EnumResources);
+
+            // 定位现有 slot：先按 控制器类型/编号 取控制器 InstanceID，再按 ctrlGuid+位置 段位匹配 slot（与 RemoveDrive/回滚 同款、可靠）
+            int ctrlResourceType = controllerType == "SCSI" ? 6 : 5;
+            var ctrlList = rasdResp.Data.Where(r => r.ResourceType == ctrlResourceType).ToList();
+            string? ctrlInstanceId = controllerType == "IDE"
+                ? ctrlList.FirstOrDefault(r =>
+                  {
+                      var segs = r.InstanceID.Split('\\');
+                      return segs.Length >= 1 && int.TryParse(segs[^1], out int n) && n == controllerNumber;
+                  })?.InstanceID
+                : ctrlList.ElementAtOrDefault(controllerNumber)?.InstanceID;
+
+            if (ctrlInstanceId == null)
+                return (false, Properties.Resources.Error_Storage_ControllerNotFound);
+
+            var ctrlSegs = ctrlInstanceId.Split('\\');
+            string ctrlGuid = ctrlSegs.Length >= 2 ? ctrlSegs[^2] : "";
+            int slotResourceType = resourceSubType.Contains("CD/DVD", StringComparison.OrdinalIgnoreCase) ? 16 : 17;
+
+            var slot = rasdResp.Data.FirstOrDefault(r =>
+            {
+                if (r.ResourceType != slotResourceType) return false;
+                var segs = r.InstanceID.Split('\\');
+                return segs.Length >= 5 && segs[^1] == "D" && segs[^4] == ctrlGuid
+                    && int.TryParse(segs[^2], out int cLoc) && cLoc == controllerLocation;
+            });
+
+            if (slot == null)
+                return (false, Properties.Resources.Error_Storage_ResNotFound);
+
+            var sasdClass = new ManagementClass(
+                settings.Scope,
+                new ManagementPath("Msvm_StorageAllocationSettingData"),
+                null);
+            using var sasdObj = sasdClass.CreateInstance();
+            sasdObj["ResourceType"] = (ushort)31;
+            sasdObj["ResourceSubType"] = resourceSubType;
+            sasdObj["Parent"] = slot.ObjPath;
+            sasdObj["AutomaticAllocation"] = true;
+            sasdObj["HostResource"] = new string[] { newPath };
+
+            string sasdXml = sasdObj.GetText(TextFormat.CimDtd20);
+
+            var addResult = await WmiApi.InvokeAsync(
+                "SELECT * FROM Msvm_VirtualSystemManagementService",
+                "AddResourceSettings",
+                p =>
+                {
+                    p["AffectedConfiguration"] = settings.Path.Path;
+                    p["ResourceSettings"] = new string[] { sasdXml };
+                },
+                WmiScope.HyperV);
+
+            return addResult.Success
+                ? (true, string.Empty)
+                : (false, FriendlyError.LastSentence(addResult.Error));
         }
 
         // ============================================================
         // 主机物理磁盘控制
         // ============================================================
 
-        public async Task<ApiResponse> SetDiskOfflineStatusAsync(int diskNumber, bool isOffline)
-        {
-            var diskResp = await WmiApi.QueryFirstCimAsync(
-                $"SELECT * FROM MSFT_Disk WHERE Number = {diskNumber}",
-                obj => obj,
-                WmiScope.Storage);
-
-            if (!diskResp.HasData)
-                return ApiResponse.Fail($"Disk {diskNumber} not found", -1, ApiErrorSource.Wmi);
-
-            string methodName = isOffline ? "Offline" : "Online";
-
-            return await WmiApi.InvokeCimMethodAsync(
-                diskResp.Data!,
-                methodName,
-                WmiScope.Storage);
-        }
-
         // ============================================================
         // ISO 镜像生成
         // ============================================================
 
-        private async Task<(bool Success, string Message)> CreateIsoFromDirectoryAsync(
+        private static async Task<(bool Success, string Message)> CreateIsoFromDirectoryAsync(
             string sourceDirectory, string targetIsoPath, string volumeLabel)
         {
             var sourceDirInfo = new DirectoryInfo(sourceDirectory);
-            if (!sourceDirInfo.Exists) return (false, "Iso_Error_SourceDirNotFound");
+            if (!sourceDirInfo.Exists) return (false, Properties.Resources.Error_Storage_SourceNoExist);
 
             string finalVolumeLabel = string.IsNullOrWhiteSpace(volumeLabel)
                 ? sourceDirInfo.Name : volumeLabel;
@@ -1032,33 +1183,16 @@ namespace ExHyperV.Services
                         Directory.CreateDirectory(targetDir);
 
                     IsoBuilderService.BuildUdfIso(sourceDirectory, targetIsoPath, finalVolumeLabel);
-                    return (true, "Iso_Msg_CreateSuccess");
+                    return (true, string.Empty);
                 }
                 catch (Exception ex)
                 {
-                    return (false, $"Iso_Error_BuildFailed: {ex.Message}");
+                    return (false, string.Format(Properties.Resources.Error_Storage_IsoBuildFail, ex.Message));
                 }
             });
         }
 
-        public async Task<ApiResponse> SetDiskReadOnlyAsync(int diskNumber, bool isReadOnly)
-        {
-            var diskResp = await WmiApi.QueryFirstCimAsync(
-                $"SELECT * FROM MSFT_Disk WHERE Number = {diskNumber}",
-                obj => obj,
-                WmiScope.Storage);
-
-            if (!diskResp.HasData)
-                return ApiResponse.Fail($"Disk {diskNumber} not found", -1, ApiErrorSource.Wmi);
-
-            return await WmiApi.InvokeCimMethodAsync(
-                diskResp.Data!,
-                "SetAttributes",
-                WmiScope.Storage,
-                p => p["IsReadOnly"] = isReadOnly);
-        }
-
-        public async Task<(bool Success, int DiskNumber)> MountDiskImageAsync(string imagePath)
+        public static async Task<(bool Success, int DiskNumber)> MountDiskImageAsync(string imagePath)
         {
             var imageResp = await WmiApi.QueryFirstCimAsync(
                 $"SELECT * FROM MSFT_DiskImage WHERE ImagePath = '{imagePath.Replace("'", "\\'")}'",
@@ -1088,7 +1222,7 @@ namespace ExHyperV.Services
             return (true, diskResp.Data);
         }
 
-        public async Task<bool> DismountDiskImageAsync(string imagePath)
+        public static async Task<bool> DismountDiskImageAsync(string imagePath)
         {
             var imageResp = await WmiApi.QueryFirstCimAsync(
                 $"SELECT * FROM MSFT_DiskImage WHERE ImagePath = '{imagePath.Replace("'", "\\'")}'",
@@ -1105,7 +1239,7 @@ namespace ExHyperV.Services
             return result.Success;
         }
 
-        public async Task<(bool Success, int DiskNumber)> MountVhdxAsync(string imagePath)
+        public static async Task<(bool Success, int DiskNumber)> MountVhdxAsync(string imagePath)
         {
             await DismountVhdxAsync(imagePath);
 
@@ -1125,7 +1259,7 @@ namespace ExHyperV.Services
             for (int i = 0; i < 10; i++)
             {
                 var diskResp = await WmiApi.QueryFirstCimAsync(
-                    $"SELECT * FROM MSFT_Disk WHERE Location = '{imagePath.Replace("'", "\\'").Replace("\\", "\\\\")}'",
+                    $"SELECT * FROM MSFT_Disk WHERE Location = '{WmiApi.Escape(imagePath)}'",
                     obj => Convert.ToInt32(obj["Number"] ?? -1),
                     WmiScope.Storage);
 
@@ -1137,7 +1271,7 @@ namespace ExHyperV.Services
             return (false, -1);
         }
 
-        public async Task<bool> DismountVhdxAsync(string imagePath)
+        public static async Task<bool> DismountVhdxAsync(string imagePath)
         {
             try
             {
@@ -1167,7 +1301,7 @@ namespace ExHyperV.Services
             catch { return false; }
         }
 
-        public async Task<(bool Success, char DriveLetter)> AssignPartitionDriveLetterAsync(
+        public static async Task<(bool Success, char DriveLetter)> AssignPartitionDriveLetterAsync(
             int diskNumber, int partitionNumber, char driveLetter)
         {
             var partResp = await WmiApi.QueryFirstCimAsync(
@@ -1187,7 +1321,7 @@ namespace ExHyperV.Services
             return result.Success ? (true, driveLetter) : (false, '\0');
         }
 
-        public async Task<bool> RemovePartitionAccessPathAsync(
+        public static async Task<bool> RemovePartitionAccessPathAsync(
             int diskNumber, int partitionNumber, char driveLetter)
         {
             var partResp = await WmiApi.QueryFirstCimAsync(
@@ -1206,7 +1340,7 @@ namespace ExHyperV.Services
             return result.Success;
         }
 
-        public async Task RemoveAllPartitionAccessPathsAsync(int diskNumber)
+        public static async Task RemoveAllPartitionAccessPathsAsync(int diskNumber)
         {
             var partsResp = await WmiApi.QueryCimAsync(
                 $"SELECT * FROM MSFT_Partition WHERE DiskNumber = {diskNumber}",
@@ -1227,7 +1361,7 @@ namespace ExHyperV.Services
             }
         }
 
-        public async Task<(bool Success, string CtrlType, int CtrlNum, int CtrlLoc)>
+        public static async Task<(bool Success, string CtrlType, int CtrlNum, int CtrlLoc)>
             DetachPhysicalDiskAsync(string vmName, int diskNumber)
         {
             using var vmObj = WmiApi.GetVmComputerSystem(vmName);

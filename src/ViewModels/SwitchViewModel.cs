@@ -11,9 +11,11 @@ namespace ExHyperV.ViewModels
     {
         // ===== 字段 =====
 
-        private readonly HyperVSwitchService _networkService;
-        private readonly List<PhysicalAdapterInfo> _allPhysicalAdapters;
-        private readonly ObservableCollection<SwitchViewModel> _allSwitchViewModels;
+        private readonly List<string> _allPhysicalAdapters;
+        private readonly List<string> _bridgeableAdapters;
+
+        // 默认交换机(HCN/ICS 创建、每台机器同一 GUID);按 Id 判、免本地化与用户同名交换机骗过;WMI 返回大写故忽略大小写
+        private const string DefaultSwitchId = "c08cb7b8-9b3c-408e-8e30-5e16a3aeb444";
 
         // ===== 属性 =====
 
@@ -21,7 +23,7 @@ namespace ExHyperV.ViewModels
 
         [ObservableProperty] private string _switchName;
         [ObservableProperty] private string _switchId;
-        [ObservableProperty][NotifyPropertyChangedFor(nameof(StatusText)), NotifyPropertyChangedFor(nameof(IsConnected))] private string _selectedNetworkMode;
+        [ObservableProperty][NotifyPropertyChangedFor(nameof(StatusText)), NotifyPropertyChangedFor(nameof(IsConnected))] private SwitchMode _selectedNetworkMode;
         [ObservableProperty][NotifyPropertyChangedFor(nameof(StatusText)), NotifyPropertyChangedFor(nameof(IsConnected)), NotifyPropertyChangedFor(nameof(DropDownButtonContent))] private string? _selectedUpstreamAdapter;
         [ObservableProperty] private bool _isHostConnectionAllowed;
         [ObservableProperty] private bool _isUpstreamSelectionEnabled;
@@ -33,22 +35,21 @@ namespace ExHyperV.ViewModels
 
         public bool IsReverting { get; private set; } = false;
 
-        public string StatusText => IsDefaultSwitch ? ExHyperV.Properties.Resources.Warning_CannotModifyDefaultSwitch : IsConnected ? string.Format(Properties.Resources.Status_ConnectedTo, SelectedUpstreamAdapter) : ExHyperV.Properties.Resources.Status_UpstreamNotConnected;
-        public bool IsConnected => !string.IsNullOrEmpty(SelectedUpstreamAdapter) && (SelectedNetworkMode == "Bridge" || SelectedNetworkMode == "NAT");
-        public string DropDownButtonContent => IsDefaultSwitch ? ExHyperV.Properties.Resources.Auto : SelectedNetworkMode == "Isolated" ? ExHyperV.Properties.Resources.Status_Unavailable : string.IsNullOrEmpty(SelectedUpstreamAdapter) ? ExHyperV.Properties.Resources.Placeholder_SelectNetworkAdapter : SelectedUpstreamAdapter;
+        public string StatusText => IsDefaultSwitch ? Properties.Resources.Warning_CannotModifyDefaultSwitch : IsConnected ? string.Format(Properties.Resources.Status_ConnectedTo, SelectedUpstreamAdapter) : Properties.Resources.Status_UpstreamNotConnected;
+        public bool IsConnected => !string.IsNullOrEmpty(SelectedUpstreamAdapter) && (SelectedNetworkMode == SwitchMode.Bridge || SelectedNetworkMode == SwitchMode.NAT);
+        public string DropDownButtonContent => IsDefaultSwitch ? Properties.Resources.Auto : SelectedNetworkMode == SwitchMode.Isolated ? Properties.Resources.Status_Unavailable : string.IsNullOrEmpty(SelectedUpstreamAdapter) ? Properties.Resources.Placeholder_SelectNetworkAdapter : SelectedUpstreamAdapter;
         public string IconGlyph => DeviceIcons.GetGlyph("Switch", SwitchName);
 
         // ===== 构造 =====
 
-        public SwitchViewModel(SwitchInfo switchInfo, HyperVSwitchService networkService, List<PhysicalAdapterInfo> allPhysicalAdapters, ObservableCollection<SwitchViewModel> allSwitchViewModels)
+        public SwitchViewModel(SwitchInfo switchInfo, List<string> allPhysicalAdapters, List<string> bridgeableAdapters)
         {
-            _networkService = networkService;
             _allPhysicalAdapters = allPhysicalAdapters;
-            _allSwitchViewModels = allSwitchViewModels;
+            _bridgeableAdapters = bridgeableAdapters;
 
             _switchName = switchInfo.SwitchName;
             _switchId = switchInfo.Id;
-            _isDefaultSwitch = _switchName == "Default Switch";
+            IsDefaultSwitch = string.Equals(_switchId?.Trim('{', '}'), DefaultSwitchId, StringComparison.OrdinalIgnoreCase);
 
             _ = RevertTo(switchInfo);
 
@@ -57,6 +58,7 @@ namespace ExHyperV.ViewModels
                 if (e.PropertyName == nameof(SelectedNetworkMode))
                 {
                     UpdateUiLogic();
+                    UpdateMenuItems();   // 桥接↔NAT 切换时重建网卡列表(桥接排不可二层桥的蜂窝/WWAN)
                     OnPropertyChanged(nameof(DropDownButtonContent));
                 }
             };
@@ -67,11 +69,11 @@ namespace ExHyperV.ViewModels
         [RelayCommand]
         private void SetNetworkMode(string? mode)
         {
-            if (string.IsNullOrEmpty(mode) || SelectedNetworkMode == mode)
+            if (!Enum.TryParse<SwitchMode>(mode, out var parsed) || SelectedNetworkMode == parsed)
             {
                 return;
             }
-            SelectedNetworkMode = mode;
+            SelectedNetworkMode = parsed;
         }
 
         [RelayCommand]
@@ -85,10 +87,10 @@ namespace ExHyperV.ViewModels
             IsReverting = true;
             try
             {
-                SelectedNetworkMode = GetModeFromSwitchType(switchInfo.SwitchType);
+                SelectedNetworkMode = switchInfo.SwitchType;
                 SelectedUpstreamAdapter = switchInfo.NetAdapterInterfaceDescription;
-                IsHostConnectionAllowed = bool.TryParse(switchInfo.AllowManagementOS, out var result) && result;
-                if (_isDefaultSwitch) { SelectedNetworkMode = "NAT"; }
+                IsHostConnectionAllowed = switchInfo.AllowManagementOS;
+                if (IsDefaultSwitch) { SelectedNetworkMode = SwitchMode.NAT; }
                 UpdateUiLogic();
                 await UpdateTopologyAsync();
             }
@@ -100,8 +102,8 @@ namespace ExHyperV.ViewModels
 
         private void UpdateUiLogic()
         {
-            IsUpstreamSelectionEnabled = (SelectedNetworkMode == "Bridge" || SelectedNetworkMode == "NAT") && !IsDefaultSwitch;
-            IsHostConnectionToggleEnabled = SelectedNetworkMode == "Isolated" && !IsDefaultSwitch;
+            IsUpstreamSelectionEnabled = (SelectedNetworkMode == SwitchMode.Bridge || SelectedNetworkMode == SwitchMode.NAT) && !IsDefaultSwitch;
+            IsHostConnectionToggleEnabled = SelectedNetworkMode == SwitchMode.Isolated && !IsDefaultSwitch;
             if (!IsHostConnectionToggleEnabled && !IsDefaultSwitch)
             {
                 IsHostConnectionAllowed = true;
@@ -112,26 +114,19 @@ namespace ExHyperV.ViewModels
         {
             var currentSelection = this.SelectedUpstreamAdapter;
             MenuItems.Clear();
-            if (_allPhysicalAdapters == null) return;
-            var allPhysicalAdapterNames = _allPhysicalAdapters.Select(p => p.InterfaceDescription).ToList();
-            foreach (var name in allPhysicalAdapterNames) { MenuItems.Add(name); }
+            // 桥接只列可二层桥的网卡(蜂窝/WWAN 不在 Msvm_ExternalEthernetPort/WiFiPort);NAT 列全部物理网卡
+            var source = SelectedNetworkMode == SwitchMode.Bridge ? _bridgeableAdapters : _allPhysicalAdapters;
+            if (source == null) return;
+            foreach (var name in source) { MenuItems.Add(name); }
             if (!string.IsNullOrEmpty(currentSelection) && !MenuItems.Contains(currentSelection)) { MenuItems.Add(currentSelection); }
         }
 
-        [RelayCommand]
         private async Task UpdateTopologyAsync()
         {
             if (string.IsNullOrEmpty(SwitchName)) return;
-            var clients = await _networkService.GetFullSwitchNetworkStateAsync(SwitchName);
+            var clients = await HyperVSwitchService.GetFullSwitchNetworkStateAsync(SwitchName);
             ConnectedClients.Clear();
             foreach (var client in clients) { ConnectedClients.Add(client); }
         }
-
-        public static string GetModeFromSwitchType(string switchType) => switchType switch
-        {
-            "External" => "Bridge",
-            "NAT" => "NAT",
-            _ => "Isolated"
-        };
     }
     }

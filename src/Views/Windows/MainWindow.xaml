@@ -49,7 +49,7 @@
                     NavigationCacheMode="Enabled"
                     TargetPageType="{x:Type pages:HostPage}">
                     <ui:NavigationViewItem.Icon>
-                        <ui:FontIcon FontSize="16" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE737;"/>
+                        <ui:FontIcon FontSize="16" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE90F;"/>
                     </ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>
                 
@@ -64,7 +64,6 @@
                 </ui:NavigationViewItem>
                 
                 <ui:NavigationViewItem
-                    x:Name="pcie"
                     Content="{x:Static properties:Resources.PCIe}"
                     NavigationCacheMode="Enabled"
                     TargetPageType="{x:Type pages:PCIePage}">
@@ -74,7 +73,6 @@
                 </ui:NavigationViewItem>
 
                 <ui:NavigationViewItem
-                    x:Name="VMnet"
                     Content="{x:Static properties:Resources.Title_VirtualSwitch}"
                     NavigationCacheMode="Enabled"
                     Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"
@@ -86,13 +84,12 @@
 
                 <!-- USB 直通菜单项 -->
                 <ui:NavigationViewItem
-    x:Name="USBPassThrough"
     Content="{x:Static properties:Resources.Label_UsbPassthrough}" 
     NavigationCacheMode="Enabled"
     TargetPageType="{x:Type pages:USBPage}">
                     <ui:NavigationViewItem.Icon>
-                        <!-- 使用 USB 相关的图标 -->
-                        <ui:FontIcon FontSize="16" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE88E;"/>
+                        <!-- USB 图标，与 PCIe 页 USB 控制器一致（DeviceIcons 的 USB glyph ECF0） -->
+                        <ui:FontIcon FontSize="16" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xECF0;"/>
                     </ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>
 
@@ -113,7 +110,7 @@
 
         </ui:NavigationView>
         
-        <ContentPresenter Grid.Row="1" Grid.RowSpan="2" Grid.ColumnSpan="2" x:Name="ContentPresenterForDialogs"/>
+        <ui:ContentDialogHost Grid.Row="1" Grid.RowSpan="2" Grid.ColumnSpan="2" x:Name="ContentPresenterForDialogs"/>
         <ui:SnackbarPresenter Grid.Row="2" Grid.Column="1" VerticalAlignment="Bottom" x:Name="SnackbarPresenter"/>
         
     </Grid>

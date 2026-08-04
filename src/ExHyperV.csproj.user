@@ -9,6 +9,9 @@
     </ApplicationDefinition>
   </ItemGroup>
   <ItemGroup>
+    <Compile Update="Tools\Controls\MsRdpAxHost.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Update="Views\Components\VmAddGpuProgressView.xaml.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -46,9 +49,6 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Update="Views\Components\VmStorageSettingsView.xaml.cs">
-      <SubType>Code</SubType>
-    </Compile>
-    <Compile Update="Views\Components\VmConsoleView.xaml.cs">
       <SubType>Code</SubType>
     </Compile>
   </ItemGroup>

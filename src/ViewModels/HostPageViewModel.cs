@@ -4,18 +4,16 @@ using ExHyperV.Services;
 using ExHyperV.Interaction;
 using ExHyperV.Tools;
 using System.Collections.ObjectModel;
-using System.Windows;
 using Wpf.Ui.Controls;
 
 namespace ExHyperV.ViewModels
 {
     public record SchedulerMode(string Name, HyperVSchedulerType Type);
 
-    public partial class HostPageViewModel : ObservableObject
+    public partial class HostPageViewModel : PageViewModelBase
     {
         // ===== 字段与状态 =====
 
-        private readonly HyperVHostService _hostService = new();
         private bool _isInitialized = false;
 
         // ===== 绑定属性 =====
@@ -25,29 +23,41 @@ namespace ExHyperV.ViewModels
         public CheckStatusViewModel HyperVStatus { get; } = new("");
         public CheckStatusViewModel VersionStatus { get; } = new("");
         public CheckStatusViewModel IommuStatus { get; } = new("");
+        public CheckStatusViewModel UsbStatus { get; } = new("");
+
+        // IOMMU 在 ARM 上叫 SMMU（System MMU），按架构显示正确名称；检测逻辑（DeviceGuard DMA 保护）跨架构通用。
+        public string IommuLabel =>
+            System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64
+                ? Properties.Resources.Menu_Iommu_Smmu
+                : Properties.Resources.Menu_Iommu;
 
         [ObservableProperty] private bool _isGpuStrategyEnabled;
         [ObservableProperty] private bool _isGpuStrategyToggleEnabled = false;
+        [ObservableProperty] private bool _isNativeNvmeEnabled;
+        [ObservableProperty] private bool _isNativeNvmeToggleEnabled = false;
+        [ObservableProperty] private bool _isNativeNvmeSupported;
         [ObservableProperty] private bool _isServerSystem;
         [ObservableProperty] private bool _isSystemSwitchEnabled = false;
-        [ObservableProperty] private string _systemVersionDesc;
+
+        // 有挂起的版本切换任务（重启前不可再切，开关保持禁用）
+        private bool _hasPendingSwitch = false;
         [ObservableProperty] private bool _isNumaSpanningEnabled;
         [ObservableProperty] private HyperVSchedulerType _currentSchedulerType;
 
         public ObservableCollection<SchedulerMode> SchedulerModes { get; } = new()
         {
-            new SchedulerMode(ExHyperV.Properties.Resources.Scheduler_Classic, HyperVSchedulerType.Classic),
-            new SchedulerMode(ExHyperV.Properties.Resources.Scheduler_Core, HyperVSchedulerType.Core),
-            new SchedulerMode(ExHyperV.Properties.Resources.Scheduler_Root, HyperVSchedulerType.Root)
+            new SchedulerMode(Properties.Resources.Scheduler_Classic, HyperVSchedulerType.Classic),
+            new SchedulerMode(Properties.Resources.Scheduler_Core, HyperVSchedulerType.Core),
+            new SchedulerMode(Properties.Resources.Scheduler_Root, HyperVSchedulerType.Root)
         };
 
         // ===== 构造与初始化检查 =====
 
-        public HostPageViewModel() => _ = LoadInitialStatusAsync();
+        public HostPageViewModel() => LoadInitialStatusAsync().SafeFireAndForget();
 
         private async Task LoadInitialStatusAsync()
         {
-            await Task.WhenAll(CheckSystemInfoAsync(), CheckCpuInfoAsync(), CheckHyperVInfoAsync(), CheckServerInfoAsync(), CheckIommuAsync());
+            await Task.WhenAll(CheckSystemInfoAsync(), CheckCpuInfoAsync(), CheckHyperVInfoAsync(), CheckServerInfoAsync(), CheckIommuAsync(), CheckUsbInfoAsync());
             await InitializeVersionPolicyAsync();
             _isInitialized = true;
         }
@@ -65,7 +75,7 @@ namespace ExHyperV.ViewModels
             else
             {
                 VersionStatus.IsSuccess = false;
-                VersionStatus.StatusText = baseVersion + ExHyperV.Properties.Resources.Status_Msg_GpuPvNotSupported;
+                VersionStatus.StatusText = baseVersion;   // 红叉+“GPU-PV 要求”标题已表意,不再拼“(不支持 GPU-PV)”
             }
             VersionStatus.IsChecking = false;
         });
@@ -78,8 +88,7 @@ namespace ExHyperV.ViewModels
 
         private async Task CheckHyperVInfoAsync()
         {
-            var (isReady, isInstalled, statusText) = await _hostService.GetHyperVStatusAsync();
-            HyperVStatus.IsInstalled = isInstalled;
+            var (isReady, _, statusText) = await HyperVHostService.GetHyperVStatusAsync();
             HyperVStatus.IsSuccess = isReady;
             HyperVStatus.StatusText = statusText;
             HyperVStatus.IsChecking = false;
@@ -97,13 +106,25 @@ namespace ExHyperV.ViewModels
             SystemStatus.IsChecking = false;
         }
 
+        private async Task CheckUsbInfoAsync()
+        {
+            UsbStatus.IsSuccess = await Task.Run(() => UsbVmbusService.IsUsbipdInstalled());
+            UsbStatus.IsChecking = false;
+        }
+
         private async Task InitializeVersionPolicyAsync()
         {
-            IsGpuStrategyEnabled = await Task.Run(() => _hostService.GetGpuStrategyEnabled());
+            IsGpuStrategyEnabled = await Task.Run(() => HyperVHostService.GetGpuStrategyEnabled());
+            IsNativeNvmeSupported = Environment.OSVersion.Version.Build >= 26100; // WS2025 / Win11 24H2 起才有原生 NVMe
+            IsNativeNvmeEnabled = await Task.Run(() => HostNvmeService.IsNativeNvmeEnabled());
             InitializeProductType();
             await LoadAdvancedConfigAsync();
             IsGpuStrategyToggleEnabled = true;
-            IsSystemSwitchEnabled = true;
+            IsNativeNvmeToggleEnabled = IsNativeNvmeSupported;   // 不支持的系统(Win10 等)开关置灰而非隐藏
+            // 切换服务器版本(黑魔法)仅对特定客户端 SKU 生效；真 Server/家庭版/标准专业版/企业版等不适用，开关置灰。
+            // 判定走 EditionID(真实 SKU)而非 ProductType——后者正是黑魔法改的值，用它会致被切的客户端版无法切回。
+            // 已有挂起切换任务时同样置灰：挂起的替换无法取消也无法覆盖，重启生效前不可再切。
+            IsSystemSwitchEnabled = !_hasPendingSwitch && HyperVHostService.IsServerSwitchApplicable();
         }
 
         private async Task LoadAdvancedConfigAsync()
@@ -126,6 +147,13 @@ namespace ExHyperV.ViewModels
             if (value) HyperVGpuPolicyService.AllowUnsupportedGpuAssignment(); else HyperVGpuPolicyService.ResetGpuAssignmentPolicy();
         }
 
+        partial void OnIsNativeNvmeEnabledChanged(bool value)
+        {
+            if (!_isInitialized) return;
+            if (value) HostNvmeService.EnableNativeNvme(); else HostNvmeService.DisableNativeNvme();
+            ShowRestartPrompt(Properties.Resources.Msg_Host_NativeNvmeChanged);
+        }
+
         partial void OnIsNumaSpanningEnabledChanged(bool value)
         {
             if (!_isInitialized) return;
@@ -134,7 +162,7 @@ namespace ExHyperV.ViewModels
                 var (ok, msg) = await HyperVNumaService.SetNumaSpanningEnabledAsync(value);
                 if (!ok)
                 {
-                    ShowSnackbar(Translate("Status_Title_Error"), msg, ControlAppearance.Danger, SymbolRegular.ErrorCircle24);
+                    ShowError(msg);
                     Application.Current.Dispatcher.Invoke(() =>
                     {
                         _isInitialized = false;
@@ -151,10 +179,10 @@ namespace ExHyperV.ViewModels
             _ = Task.Run(async () =>
             {
                 if (await HyperVSchedulerService.SetSchedulerTypeAsync(value))
-                    ShowRestartPrompt(ExHyperV.Properties.Resources.Msg_Host_SchedulerChanged);
+                    ShowRestartPrompt(Properties.Resources.Msg_Host_SchedulerChanged);
                 else
                 {
-                    ShowSnackbar(Translate("Status_Title_Error"), ExHyperV.Properties.Resources.Error_Host_SchedulerFail, ControlAppearance.Danger, SymbolRegular.ErrorCircle24);
+                    ShowError(Properties.Resources.Error_Host_SchedulerFail);
                     var actual = HyperVSchedulerService.GetSchedulerType();
                     Application.Current.Dispatcher.Invoke(() =>
                     {
@@ -177,11 +205,13 @@ namespace ExHyperV.ViewModels
         [RelayCommand]
         private async Task DisableHyperVAsync()
         {
-            ShowSnackbar(Translate("Status_Title_Info"), Properties.Resources.HostPageViewModel_DisablingHyperV, ControlAppearance.Info, SymbolRegular.Settings24);
-            bool ok = await _hostService.DisableHyperVAsync();
+            ShowTip(Properties.Resources.HostPageViewModel_DisablingHyperV);
+            var op = HyperVHostService.DisableHyperVAsync();
+            await Task.WhenAll(op, Task.Delay(1000));   // "操作中"提示至少停留 1s，不被结果一闪而过
+            bool ok = await op;
             if (!ok)
             {
-                ShowSnackbar(Translate("Status_Title_Error"), Properties.Resources.HostPageViewModel_DisableFailed, ControlAppearance.Danger, SymbolRegular.ErrorCircle24);
+                ShowError(Properties.Resources.HostPageViewModel_DisableFailed);
                 return;
             }
             ShowRestartPrompt(Properties.Resources.HostPageViewModel_DisableSuccess);
@@ -190,26 +220,33 @@ namespace ExHyperV.ViewModels
         [RelayCommand]
         private async Task EnableHyperVAsync()
         {
-            ShowSnackbar(Translate("Status_Title_Info"), ExHyperV.Properties.Resources.Msg_Host_EnableHyperV, ControlAppearance.Info, SymbolRegular.Settings24);
-            bool ok = await _hostService.EnableHyperVAsync();
+            ShowTip(Properties.Resources.Msg_Host_EnableHyperV);
+            var op = HyperVHostService.EnableHyperVAsync();
+            await Task.WhenAll(op, Task.Delay(1000));   // "操作中"提示至少停留 1s，不被结果一闪而过
+            bool ok = await op;
             if (!ok)
             {
-                ShowSnackbar(Translate("Status_Title_Error"), ExHyperV.Properties.Resources.Error_Host_EnableFail, ControlAppearance.Danger, SymbolRegular.ErrorCircle24);
+                ShowError(Properties.Resources.Error_Host_EnableFail);
                 return;
             }
-            ShowRestartPrompt(ExHyperV.Properties.Resources.Msg_Host_EnableSuccess);
+            ShowRestartPrompt(Properties.Resources.Msg_Host_EnableSuccess);
         }
 
         // ===== 系统版本切换 =====
 
         private void InitializeProductType()
         {
-            IsServerSystem = HyperVHostService.IsServerSystem();
-            UpdateSystemDesc(IsServerSystem);
+            // 有挂起的切换任务时，开关显示"重启后的目标状态"而非当前 ProductType——
+            // 灰在目标位置传达"操作已被接受、等重启"；方向未知(外部替换)则保守停在当前值。
+            string? pending = SystemTypeService.GetPendingTarget();
+            _hasPendingSwitch = pending != null;
+            IsServerSystem = pending switch
+            {
+                "ServerNT" => true,
+                "WinNT" => false,
+                _ => HyperVHostService.IsServerSystem(),
+            };
         }
-
-        private void UpdateSystemDesc(bool isServer) =>
-            SystemVersionDesc = $"{Translate("Status_Msg_CurrentVer")}: {(isServer ? Translate("Status_Edition_Server") : Translate("Status_Edition_Workstation"))}";
 
         private async void SwitchSystemVersion(bool toServer)
         {
@@ -217,39 +254,81 @@ namespace ExHyperV.ViewModels
             {
                 IsSystemSwitchEnabled = false;
 
-                if (SystemTypeService.HasPendingTask())
+                string? pending = SystemTypeService.GetPendingTarget();
+                if (pending != null)
                 {
-                    ShowSnackbar(Translate("Status_Title_Warning"),
-                        Translate("Status_Msg_RestartRequired"),
-                        ControlAppearance.Caution,
-                        SymbolRegular.Warning24);
-                    _isInitialized = false;
-                    IsServerSystem = !toServer;
-                    _isInitialized = true;
-                    return;
+                    ShowTip(Properties.Resources.Status_Msg_RestartRequired);
+                    ShowPendingState(pending, toServer);
+                    return;   // 挂起任务无法取消或覆盖，重启前保持禁用
+                }
+
+                // 危险操作：仅「切到服务器版本」前二次确认（红色弹窗，同「彻底删除虚拟机」）。取消则回拨开关、重新启用。
+                // 切回客户端（工作站）无此风险，直接执行、不打扰。
+                if (toServer)
+                {
+                    var confirm = new Wpf.Ui.Controls.MessageBox
+                    {
+                        Title = Properties.Resources.SwitchServer_ConfirmTitle,
+                        Content = new System.Windows.Controls.TextBlock
+                        {
+                            Text = Properties.Resources.SwitchServer_ConfirmMsg,
+                            TextWrapping = System.Windows.TextWrapping.Wrap,
+                        },
+                        PrimaryButtonText = Properties.Resources.SwitchServer_ConfirmBtn,
+                        PrimaryButtonAppearance = Wpf.Ui.Controls.ControlAppearance.Danger,
+                        CloseButtonText = Properties.Resources.Button_Cancel,
+                    };
+                    Interaction.Dialogs.ForceDangerButtonWhiteForeground(confirm);   // Danger 主按钮亮色主题下红底黑字，强制刷白
+                    if (await confirm.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary)
+                    {
+                        _isInitialized = false; IsServerSystem = !toServer; _isInitialized = true;
+                        IsSystemSwitchEnabled = HyperVHostService.IsServerSwitchApplicable();
+                        return;
+                    }
                 }
 
                 string result = await Task.Run(() => SystemTypeService.ApplySwitch(toServer));
-                if (result == "SUCCESS") ShowRestartPrompt(Translate("Status_Msg_RestartNow"));
-                else
+                if (result == "SUCCESS")
                 {
-                    ShowSnackbar(Translate("Status_Title_Error"), result, ControlAppearance.Danger, SymbolRegular.ErrorCircle24);
-                    _isInitialized = false; IsServerSystem = !toServer; _isInitialized = true;
+                    _hasPendingSwitch = true;
+                    ShowRestartPrompt(Properties.Resources.Status_Msg_RestartNow);
+                    return;   // 开关停在目标位置并保持禁用（待重启态）
                 }
+                if (result == "PENDING")
+                {
+                    ShowTip(Properties.Resources.Status_Msg_RestartRequired);
+                    ShowPendingState(SystemTypeService.GetPendingTarget(), toServer);
+                    return;
+                }
+
+                ShowError(result);
+                _isInitialized = false; IsServerSystem = !toServer; _isInitialized = true;
+                IsSystemSwitchEnabled = HyperVHostService.IsServerSwitchApplicable();
             }
-            finally { IsSystemSwitchEnabled = true; }
+            catch (Exception ex)
+            {
+                // async void：未捕获异常会直接崩溃 UI 线程；兜底上报并回滚开关状态
+                ShowError(ex.Message);
+                _isInitialized = false; IsServerSystem = !toServer; _isInitialized = true;
+                IsSystemSwitchEnabled = HyperVHostService.IsServerSwitchApplicable();
+            }
+        }
+
+        // 挂起态：开关摆到真实目标位置（方向未知则回滚到拨动前），不触发再次切换、保持禁用
+        private void ShowPendingState(string? pendingTarget, bool attempted)
+        {
+            _hasPendingSwitch = true;
+            _isInitialized = false;
+            IsServerSystem = pendingTarget switch
+            {
+                "ServerNT" => true,
+                "WinNT" => false,
+                _ => !attempted,
+            };
+            _isInitialized = true;
         }
 
 
-        // ===== UI 辅助（Snackbar / 重启提示） =====
-
-        private string Translate(string key) => ExHyperV.Properties.Resources.ResourceManager.GetString(key) ?? key;
-
-        public void ShowSnackbar(string title, string msg, ControlAppearance app, SymbolRegular icon)
-            => Notifications.ShowSnackbar(title, msg, app, icon);
-
-        private void ShowRestartPrompt(string message)
-            => Notifications.ShowRestartPrompt(message);
     }
 
     // ===== 检查项状态子 VM =====
@@ -257,9 +336,8 @@ namespace ExHyperV.ViewModels
     public partial class CheckStatusViewModel : ObservableObject
     {
         [ObservableProperty] private bool _isChecking = true;
-        [ObservableProperty] private string _statusText;
+        [ObservableProperty] private string _statusText = string.Empty;
         [ObservableProperty] private bool? _isSuccess;
-        [ObservableProperty] private bool _isInstalled;
         public string IconGlyph => IsSuccess switch { true => "\uEC61", false => "\uEB90", _ => "\uE946" };
         public System.Windows.Media.Brush IconColor => IsSuccess switch
         {

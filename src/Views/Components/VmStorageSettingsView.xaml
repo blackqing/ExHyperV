@@ -11,9 +11,6 @@
                  d:DataContext="{d:DesignInstance vm:VirtualMachinesPageViewModel}">
 
     <UserControl.Resources>
-        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
-        <converters:EqualityConverter x:Key="EqualityConverter" />
     </UserControl.Resources>
 
     <Grid>
@@ -55,10 +52,10 @@
 
         <!-- 2. 加载进度条 -->
         <ProgressBar Grid.Row="1" IsIndeterminate="True" VerticalAlignment="Top" Height="2" Margin="0,-2,0,0"
-                         Visibility="{Binding IsLoadingSettings, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                         Visibility="{Binding IsLoadingSettings, Converter={StaticResource BoolToVis}}"/>
 
         <!-- 3. 内容区域 -->
-        <ScrollViewer Grid.Row="2" Padding="24,12,24,24" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="2" Padding="24,12,24,24" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
             <Grid>
 
                 <!-- 存储项列表 -->
@@ -97,7 +94,7 @@
                                             <!-- 直接利用你现有的 BooleanToVisibilityConverter -->
                                             <ui:ProgressRing Width="18" Height="18" 
                      IsIndeterminate="True"
-                     Visibility="{Binding IsOptimizing, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                     Visibility="{Binding IsOptimizing, Converter={StaticResource BoolToVis}}"/>
                                         </Grid>
                                         <!-- 修改2：文件名和容量放在同一行 -->
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
@@ -120,7 +117,7 @@
                                             </TextBlock>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,12,0">
-                                            <!-- 新增：打开文件夹按钮 -->
+                                            <!-- 打开文件夹按钮 -->
                                             <ui:Button Icon="{ui:SymbolIcon Symbol=Share24, FontSize=18}" 
                ToolTip="{x:Static properties:Resources.Button_OpenFolder}"
                Appearance="Secondary" 
@@ -136,6 +133,10 @@
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                             </DataTrigger>
                                                             <DataTrigger Binding="{Binding PathOrDiskNumber}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                            <!-- 物理盘无文件路径，定位无意义，按钮整颗隐藏（不是禁用变灰） -->
+                                                            <DataTrigger Binding="{Binding DiskType}" Value="Physical">
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
@@ -216,6 +217,7 @@
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Grid.Column="0" Text="{x:Static properties:Resources.Common_Type}" Margin="0,0,0,10" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
@@ -242,6 +244,22 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+
+                                        <!-- 物理盘直通悬空(磁盘被手动联机)时的失效警告横幅 -->
+                                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,12,0,0" Padding="10,8" CornerRadius="4"
+                                                Background="#26E8A317" BorderBrush="#66E8A317" BorderThickness="1">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPassthroughStale}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{x:Static properties:Resources.Storage_PassthroughStale}" TextWrapping="Wrap" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                        </Border>
                                     </Grid>
                                 </Border>
                             </ui:CardExpander>

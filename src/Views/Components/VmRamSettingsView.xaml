@@ -11,10 +11,6 @@
              d:DesignHeight="1550" d:DesignWidth="1000">
 
     <UserControl.Resources>
-        <converters:ByteToBooleanConverter x:Key="ByteToBoolConverter"/>
-        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
-        <converters:BooleanToVisibilityConverter x:Key="BoolToVis" />
-        <converters:NullableToBooleanConverter x:Key="NullableToBooleanConverter" />
 
         <Style x:Key="ShutdownRequiredToggleStyle" TargetType="ui:ToggleSwitch" BasedOn="{StaticResource {x:Type ui:ToggleSwitch}}">
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -39,6 +35,16 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="EnlightenmentToggleStyle" TargetType="ui:ToggleSwitch" BasedOn="{StaticResource ShutdownRequiredToggleStyle}">
+            <Style.Triggers>
+                <!-- 物理后端(BackingType=0)不支持内存增强提示/EPF/压缩存储(实测设了被 Hyper-V 拒)，置灰并引导先改虚拟后端 -->
+                <DataTrigger Binding="{Binding SelectedVm.MemorySettings.BackingType}" Value="0">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="{x:Static properties:Resources.VmRAMSettings_NeedVirtualBacking}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="ShutdownRequiredComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
             <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
             <Setter Property="ToolTipService.InitialShowDelay" Value="50"/>
@@ -58,6 +64,47 @@
                 <Trigger Property="IsEnabled" Value="False">
                     <Setter Property="Opacity" Value="0.5"/>
                 </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ShutdownRequiredNumberBoxStyle" TargetType="ui:NumberBox" BasedOn="{StaticResource {x:Type ui:NumberBox}}">
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="50"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag}" Value="{x:Null}">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="{x:Static properties:Resources.Error_VerNotSupport}"/>
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding SelectedVm.IsRunning}" Value="True"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag, Converter={StaticResource NullableToBooleanConverter}}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="{x:Static properties:Resources.Warn_VmOffRequired}"/>
+                </MultiDataTrigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ShutdownRequiredApplyButtonStyle" TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="50"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag}" Value="{x:Null}">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="{x:Static properties:Resources.Error_VerNotSupport}"/>
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding SelectedVm.IsRunning}" Value="True"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=Tag, Converter={StaticResource NullableToBooleanConverter}}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="{x:Static properties:Resources.Warn_VmOffRequired}"/>
+                </MultiDataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -104,7 +151,7 @@
         <ProgressBar Grid.Row="1" IsIndeterminate="True" VerticalAlignment="Top" Height="2" Margin="0,-2,0,0"
                      Visibility="{Binding IsLoadingSettings, Converter={StaticResource BoolToVis}}"/>
 
-        <ScrollViewer Grid.Row="2" Padding="24,12,24,24" VerticalScrollBarVisibility="Auto"
+        <ScrollViewer Grid.Row="2" Padding="24,12,24,24" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly"
                       IsEnabled="{Binding IsLoadingSettings, Converter={StaticResource InverseBooleanConverter}}">
             <StackPanel>
                 <TextBlock Text="{x:Static properties:Resources.Label_ComputeRes}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,12"/>
@@ -191,9 +238,100 @@
                     </StackPanel>
                 </Border>
 
+                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_MmioSection}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,12"/>
+                <Border Background="{ui:ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ui:ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="0" Margin="0,0,0,32">
+                    <StackPanel>
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LowMmioSize}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LowMmioSizeDesc}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ui:NumberBox Grid.Column="1"
+                                          Style="{StaticResource ShutdownRequiredNumberBoxStyle}"
+                                          Tag="{Binding SelectedVm.MmioSettings.LowSizeMb}"
+                                          Value="{Binding SelectedVm.MmioSettings.LowSizeMb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          SmallChange="128" SpinButtonPlacementMode="Hidden"/>
+                            <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.Button_Apply}" Margin="8,0,0,0" Width="72"
+                                       Style="{StaticResource ShutdownRequiredApplyButtonStyle}"
+                                       Tag="{Binding SelectedVm.MmioSettings.LowSizeMb}"
+                                       Command="{Binding ApplyMmioSettingsCommand}" Appearance="Primary"/>
+                        </Grid>
+
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_HighMmioSize}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_HighMmioSizeDesc}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ui:NumberBox Grid.Column="1"
+                                          Style="{StaticResource ShutdownRequiredNumberBoxStyle}"
+                                          Tag="{Binding SelectedVm.MmioSettings.HighSizeMb}"
+                                          Value="{Binding SelectedVm.MmioSettings.HighSizeMb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          SmallChange="1024" SpinButtonPlacementMode="Hidden"/>
+                            <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.Button_Apply}" Margin="8,0,0,0" Width="72"
+                                       Style="{StaticResource ShutdownRequiredApplyButtonStyle}"
+                                       Tag="{Binding SelectedVm.MmioSettings.HighSizeMb}"
+                                       Command="{Binding ApplyMmioSettingsCommand}" Appearance="Primary"/>
+                        </Grid>
+
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_HighMmioBase}" FontSize="14" VerticalAlignment="Center" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                            <ui:NumberBox Grid.Column="1"
+                                          Style="{StaticResource ShutdownRequiredNumberBoxStyle}"
+                                          Tag="{Binding SelectedVm.MmioSettings.HighBaseMb}"
+                                          Value="{Binding SelectedVm.MmioSettings.HighBaseMb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          SmallChange="1024" SpinButtonPlacementMode="Hidden"/>
+                            <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.Button_Apply}" Margin="8,0,0,0" Width="72"
+                                       Style="{StaticResource ShutdownRequiredApplyButtonStyle}"
+                                       Tag="{Binding SelectedVm.MmioSettings.HighBaseMb}"
+                                       Command="{Binding ApplyMmioSettingsCommand}" Appearance="Primary"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Text="{x:Static properties:Resources.AdvancedFeatures}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,12"/>
                 <Border Background="{ui:ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ui:ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="0" Margin="0,0,0,32">
                     <StackPanel>
+                        <!-- NUMA 节点最大内存 -->
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelNumaBlockLimit}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescNumaBlockLimit}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ui:NumberBox Grid.Column="1"
+                                          Value="{Binding SelectedVm.MemorySettings.MaxMemoryBlocksPerNumaNode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Minimum="32" SmallChange="2" SpinButtonPlacementMode="Hidden"
+                                          IsEnabled="{Binding SelectedVm.IsRunning, Converter={StaticResource InverseBooleanConverter}}"/>
+                            <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.VmRAMSettings_BtnApply}" Margin="8,0,0,0" Width="72"
+                                       Command="{Binding ApplyMemorySettingsCommand}" Appearance="Primary"
+                                       IsEnabled="{Binding SelectedVm.IsRunning, Converter={StaticResource InverseBooleanConverter}}"/>
+                        </Grid>
+
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
                         <Grid Margin="24,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -215,6 +353,24 @@
 
                         <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
 
+                        <!-- 巨页 (HugePages) -->
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelHugePages}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescHugePages}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ui:ToggleSwitch Grid.Column="1"
+                                             Style="{StaticResource ShutdownRequiredToggleStyle}"
+                                             Tag="{Binding SelectedVm.MemorySettings.HugePagesEnabled}"
+                                             IsChecked="{Binding SelectedVm.MemorySettings.HugePagesEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        </Grid>
+
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
                         <Grid Margin="24,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -231,10 +387,81 @@
                                              Command="{Binding ApplyMemorySettingsCommand}"/>
                         </Grid>
 
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
+                        <!-- 机密计算 (SGX) -->
+                        <StackPanel Margin="0,8">
+                            <Grid Margin="24,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="80"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxComputing}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                                    <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxComputing}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                                </StackPanel>
+                                <ui:ToggleSwitch Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
+                                                 Style="{StaticResource ShutdownRequiredToggleStyle}"
+                                                 Tag="{Binding SelectedVm.MemorySettings.SgxEnabled}"
+                                                 IsChecked="{Binding SelectedVm.MemorySettings.SgxEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.VmRAMSettings_BtnApply}"
+                                           VerticalAlignment="Center" Padding="24,6" HorizontalAlignment="Right"
+                                           Command="{Binding ApplyMemorySettingsCommand}" Appearance="Primary"/>
+                            </Grid>
+
+                            <StackPanel Margin="48,4,24,12" IsEnabled="{Binding SelectedVm.MemorySettings.SgxEnabled}">
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="380"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxAuthMode}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxAuthMode}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1"
+                                              Style="{StaticResource ShutdownRequiredComboBoxStyle}"
+                                              Tag="{Binding SelectedVm.MemorySettings.SgxLaunchControlMode}"
+                                              ItemsSource="{Binding SgxLaunchControlOptions}"
+                                              SelectedValue="{Binding SelectedVm.MemorySettings.SgxLaunchControlMode, Mode=TwoWay}"
+                                              SelectedValuePath="Value" DisplayMemberPath="Name" Margin="180,0,0,0"/>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="380"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxMemSize}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxMemSize}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:NumberBox Grid.Column="1"
+                                                  Value="{Binding SelectedVm.MemorySettings.SgxSize, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  Minimum="2" ClearButtonEnabled="False"
+                                                  SpinButtonPlacementMode="Hidden" Margin="180,0,0,0"/>
+                                </Grid>
+
+                                <Grid Margin="0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="440"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxMsrDefault}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxMsrDefault}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ui:TextBox Grid.Column="1"
+                                                PlaceholderText="{x:Static properties:Resources.VmRAMSettings_PlaceholderSgxMsr}"
+                                                Text="{Binding SelectedVm.MemorySettings.SgxLaunchControlDefault, Mode=TwoWay}"/>
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+
                     </StackPanel>
 
                 </Border>
-
 
                 <TextBlock Text="{x:Static properties:Resources.Label_Experimental}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,12"/>
                 <Border Background="{ui:ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ui:ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="0">
@@ -258,7 +485,33 @@
                         </Grid>
                         <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
 
-                        <!-- 2. 内存访问跟踪 (合并行以节省空间) -->
+                        <!-- 2. 内存提示与压缩存储 -->
+                        <Grid Margin="24,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelMemOptimization}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleColdHint}" Margin="0,0,12,0"
+                                 Style="{StaticResource EnlightenmentToggleStyle}" Tag="{Binding SelectedVm.MemorySettings.EnableColdHint}"
+                                 IsChecked="{Binding SelectedVm.MemorySettings.EnableColdHint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleHotHint}" Margin="0,0,12,0"
+                                 Style="{StaticResource EnlightenmentToggleStyle}" Tag="{Binding SelectedVm.MemorySettings.EnableHotHint}"
+                                 IsChecked="{Binding SelectedVm.MemorySettings.EnableHotHint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleEpf}" Margin="0,0,12,0"
+                                 Style="{StaticResource EnlightenmentToggleStyle}" Tag="{Binding SelectedVm.MemorySettings.EnableEpf}"
+                                 IsChecked="{Binding SelectedVm.MemorySettings.EnableEpf, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleCompressStore}"
+                                 Style="{StaticResource EnlightenmentToggleStyle}" Tag="{Binding SelectedVm.MemorySettings.EnablePrivateCompressionStore}"
+                                 IsChecked="{Binding SelectedVm.MemorySettings.EnablePrivateCompressionStore, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                        </Grid>
+                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
+
+                        <!-- 3. 内存访问跟踪 (合并行以节省空间) -->
                         <Grid Margin="24,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -284,134 +537,7 @@
                         </Grid>
                         <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
 
-                        <!-- 3. 机密计算 (SGX) -->
-                        <StackPanel Margin="0,8">
-                            <!-- 主开关行 -->
-                            <Grid Margin="24,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="80"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxComputing}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
-                                    <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxComputing}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
-                                </StackPanel>
-
-                                <ui:ToggleSwitch Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0"
-                         Style="{StaticResource ShutdownRequiredToggleStyle}" 
-                         Tag="{Binding SelectedVm.MemorySettings.SgxEnabled}"
-                         IsChecked="{Binding SelectedVm.MemorySettings.SgxEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-
-                                <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.VmRAMSettings_BtnApply}" 
-                   VerticalAlignment="Center"
-                   Padding="24,6"
-                   HorizontalAlignment="Right"
-                   Command="{Binding ApplyMemorySettingsCommand}" 
-                   Appearance="Primary"/>
-                            </Grid>
-
-                            <!-- SGX 详细设置子区域 (当开启时启用) -->
-                            <StackPanel Margin="48,4,24,12" IsEnabled="{Binding SelectedVm.MemorySettings.SgxEnabled}">
-
-                                <!-- 3.1 授权控制模式 -->
-                                <Grid Margin="0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="380"/>
-                                        <!-- 加宽输入区域以保持一致 -->
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxAuthMode}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxAuthMode}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ComboBox Grid.Column="1"
-                      Style="{StaticResource ShutdownRequiredComboBoxStyle}"
-                      Tag="{Binding SelectedVm.MemorySettings.SgxLaunchControlMode}"
-                      ItemsSource="{Binding SgxLaunchControlOptions}"
-                      SelectedValue="{Binding SelectedVm.MemorySettings.SgxLaunchControlMode, Mode=TwoWay}"
-                      SelectedValuePath="Value" DisplayMemberPath="Name" Margin="180,0,0,0" />
-                                </Grid>
-
-                                <!-- 3.2 机密内存大小 -->
-                                <Grid Margin="0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="380"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxMemSize}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxMemSize}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:NumberBox Grid.Column="1"
-                          Value="{Binding SelectedVm.MemorySettings.SgxSize, Mode=TwoWay}" 
-                          Minimum="2" ClearButtonEnabled="False" 
-                          SpinButtonPlacementMode="Compact" Margin="180,0,0,0"/>
-                                </Grid>
-
-                                <!-- 3.3 MSR 默认值 -->
-                                <Grid Margin="0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="440"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelSgxMsrDefault}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescSgxMsrDefault}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
-                                    </StackPanel>
-                                    <ui:TextBox Grid.Column="1" PlaceholderText="{x:Static properties:Resources.VmRAMSettings_PlaceholderSgxMsr}" 
-            Text="{Binding SelectedVm.MemorySettings.SgxLaunchControlDefault, Mode=TwoWay}"/>
-                                </Grid>
-
-                                <!-- 3.4 应用按钮 (右对齐) -->
-                            </StackPanel>
-                        </StackPanel>
-
-                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
-
-                        <!-- 4. 内存提示与压缩存储 -->
-                        <Grid Margin="24,16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="560"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelMemOptimization}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleColdHint}" Margin="0,0,12,0" 
-                                 Style="{StaticResource ShutdownRequiredToggleStyle}" Tag="True"
-                                 IsChecked="{Binding SelectedVm.MemorySettings.EnableColdHint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleEpf}" Margin="0,0,12,0" 
-                                 Style="{StaticResource ShutdownRequiredToggleStyle}" Tag="True"
-                                 IsChecked="{Binding SelectedVm.MemorySettings.EnableEpf, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleCompressStore}" 
-                                 Style="{StaticResource ShutdownRequiredToggleStyle}" Tag="True"
-                                 IsChecked="{Binding SelectedVm.MemorySettings.EnablePrivateCompressionStore, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                            </StackPanel>
-                        </Grid>
-                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
-
-                        <!-- 5. NUMA 拓扑控制 -->
-                        <Grid Margin="24,16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="180"/>
-                                <ColumnDefinition Width="80"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_LabelNumaBlockLimit}" FontSize="14" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,0,0,4"/>
-                                <TextBlock Text="{x:Static properties:Resources.VmRAMSettings_DescNumaBlockLimit}" FontSize="12" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
-                            </StackPanel>
-                            <ui:NumberBox Grid.Column="1" 
-                          Value="{Binding SelectedVm.MemorySettings.MaxMemoryBlocksPerNumaNode, Mode=TwoWay}"
-                          Minimum="1" SpinButtonPlacementMode="Compact"/>
-                            <ui:Button Grid.Column="2" Content="{x:Static properties:Resources.VmRAMSettings_BtnApply}" Margin="8,0,0,0" Width="72"
-                       Command="{Binding ApplyMemorySettingsCommand}" Appearance="Primary"/>
-                        </Grid>
-                        <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
-
-                        <!-- 6. 动态内存对齐 (移至下方) -->
+                        <!-- 4. 动态内存对齐 -->
                         <Grid Margin="24,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -424,13 +550,13 @@
                             <ComboBox Grid.Column="1" VerticalAlignment="Center"
                       Style="{StaticResource ShutdownRequiredComboBoxStyle}"
                       Tag="{Binding SelectedVm.MemorySettings.DynMemOperationAlignment}"
-                      ItemsSource="{Binding MemoryUintGranularityOptions}" 
+                      ItemsSource="{Binding MemoryUintGranularityOptions}"
                       SelectedValue="{Binding SelectedVm.MemorySettings.DynMemOperationAlignment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                       SelectedValuePath="Value" DisplayMemberPath="Name" />
                         </Grid>
                         <Rectangle Height="1" Fill="{ui:ThemeResource CardStrokeColorDefaultBrush}" Margin="24,0"/>
 
-                        <!-- 7. 硬件加速扩展 (移至下方) -->
+                        <!-- 5. 硬件加速扩展 -->
                         <Grid Margin="24,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -442,11 +568,11 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                 <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_ToggleCxlSupport}" Margin="0,0,16,0"
-                                 Style="{StaticResource ShutdownRequiredToggleStyle}" 
+                                 Style="{StaticResource ShutdownRequiredToggleStyle}"
                                  Tag="{Binding SelectedVm.MemorySettings.CxlEnabled}"
                                  IsChecked="{Binding SelectedVm.MemorySettings.CxlEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_TogglePhysicalPinning}" 
-                                 Style="{StaticResource ShutdownRequiredToggleStyle}" 
+                                <ui:ToggleSwitch Content="{x:Static properties:Resources.VmRAMSettings_TogglePhysicalPinning}"
+                                 Style="{StaticResource ShutdownRequiredToggleStyle}"
                                  Tag="{Binding SelectedVm.MemorySettings.EnableGpaPinning}"
                                  IsChecked="{Binding SelectedVm.MemorySettings.EnableGpaPinning, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                             </StackPanel>

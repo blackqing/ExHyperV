@@ -12,10 +12,6 @@
              d:DataContext="{d:DesignInstance vm:VirtualMachinesPageViewModel}">
 
     <UserControl.Resources>
-        <converters:EqualityConverter x:Key="EqualityConverter" />
-        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
-        <converters:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-        <converters:EqualityToVisibilityConverter x:Key="EqualityToVisibilityConverter" />
 
         <Style TargetType="ui:ToggleSwitch" BasedOn="{StaticResource {x:Type ui:ToggleSwitch}}">
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -43,7 +39,7 @@
             </ui:Button>
         </Grid>
 
-        <ScrollViewer Grid.Row="1" Padding="24,0,24,24" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="1" Padding="24,0,24,24" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
             <StackPanel>
 
                 <!-- 插槽配置 -->
@@ -147,7 +143,7 @@
 
                             <ComboBox Grid.Column="4" SelectedValue="{Binding DeviceType, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch">
                                 <ComboBoxItem Content="{x:Static properties:Resources.AddDisk_Type_HardDisk}" Tag="HardDisk"/>
-                                <ComboBoxItem Content="{x:Static properties:Resources.AddDisk_Type_OpticalDrive}" Tag="DvdDrive"/>
+                                <ComboBoxItem Content="{x:Static properties:Resources.AddDisk_Type_OpticalDrive}" Tag="DvdDrive" Visibility="{Binding OpticalTypeOptionVisibility}"/>
                             </ComboBox>
 
                             <!-- 新建开关 (仅虚拟文件显示) -->
@@ -382,15 +378,26 @@
                             </Grid>
                         </StackPanel>
 
-                        <!-- 物理磁盘列表 (IsPhysicalSource = True) -->
-                        <!-- 重点修复：使用 Converter 直接控制可见性，避免 Style Trigger 失效留白 -->
-                        <StackPanel Visibility="{Binding IsPhysicalSource, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <!-- 物理磁盘列表 (物理来源 + 硬盘) -->
+                        <StackPanel Visibility="{Binding PhysicalDiskListVisibility}">
                             <TextBlock Text="{x:Static properties:Resources.AddDisk_NoAvailablePhysical}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"
                                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,24"
                                        Visibility="{Binding HostDisks.Count, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=0}"/>
 
-                            <ui:ListView ItemsSource="{Binding HostDisks}" SelectedItem="{Binding SelectedPhysicalDisk}" 
+                            <ui:ListView ItemsSource="{Binding HostDisks}" SelectedItem="{Binding SelectedPhysicalDisk}"
                                          Margin="0,16,0,0" BorderThickness="0" Background="Transparent" MaxHeight="200">
+                                <ui:ListView.ItemContainerStyle>
+                                    <Style TargetType="{x:Type ui:ListViewItem}" BasedOn="{StaticResource {x:Type ui:ListViewItem}}">
+                                        <!-- 不可直通(系统盘/已分配/只读/USB)的项:禁选 + 明显变暗。
+                                             深色主题下 IsEnabled=false 本身几乎看不出差别,必须叠 Opacity 才有"置灰"观感。 -->
+                                        <Setter Property="IsEnabled" Value="{Binding CanPassthrough}"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CanPassthrough}" Value="False">
+                                                <Setter Property="Opacity" Value="0.4"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ui:ListView.ItemContainerStyle>
                                 <ui:ListView.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Margin="8,6">
@@ -400,13 +407,47 @@
                                             </Grid.ColumnDefinitions>
                                             <ui:FontIcon Glyph="&#xEDA2;" FontFamily="{StaticResource SegoeFluentIcons}" FontSize="24" VerticalAlignment="Center" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                                             <StackPanel Grid.Column="1" Margin="16,0,0,0">
-                                                <TextBlock Text="{Binding FriendlyName}" FontWeight="Medium" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding FriendlyName}" FontWeight="Medium" VerticalAlignment="Center" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                                    <!-- 状态标签 -->
+                                                    <Border Margin="8,0,0,0" Padding="6,1" CornerRadius="3" VerticalAlignment="Center"
+                                                            Background="{ui:ThemeResource ControlFillColorSecondaryBrush}"
+                                                            BorderBrush="{ui:ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                        <TextBlock Text="{Binding Status}" FontSize="11" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
                                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                                     <TextBlock Text="{x:Static properties:Resources.Common_Disk}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                                                     <TextBlock Text="{Binding Number}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="4,0,0,0"/>
                                                     <TextBlock Text=" | " Foreground="{ui:ThemeResource TextFillColorTertiaryBrush}" Margin="8,0"/>
                                                     <TextBlock Text="{Binding SizeGB, StringFormat='{}{0:F2} GB'}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                                                 </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ui:ListView.ItemTemplate>
+                            </ui:ListView>
+                        </StackPanel>
+
+                        <!-- 物理光驱列表 (物理来源 + 光盘,仅第1代) -->
+                        <StackPanel Visibility="{Binding PhysicalOpticalListVisibility}">
+                            <TextBlock Text="{x:Static properties:Resources.AddDisk_NoAvailableOptical}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,24"
+                                       Visibility="{Binding HostOpticals.Count, Converter={StaticResource EqualityToVisibilityConverter}, ConverterParameter=0}"/>
+
+                            <ui:ListView ItemsSource="{Binding HostOpticals}" SelectedItem="{Binding SelectedPhysicalOptical}"
+                                         Margin="0,16,0,0" BorderThickness="0" Background="Transparent" MaxHeight="200">
+                                <ui:ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="8,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <ui:FontIcon Glyph="&#xE958;" FontFamily="{StaticResource SegoeFluentIcons}" FontSize="24" VerticalAlignment="Center" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                            <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                                                <TextBlock Text="{Binding Model}" FontWeight="Medium" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding Drive}" Foreground="{ui:ThemeResource TextFillColorTertiaryBrush}" Margin="0,2,0,0"/>
                                             </StackPanel>
                                         </Grid>
                                     </DataTemplate>

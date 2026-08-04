@@ -44,7 +44,7 @@
                    Margin="5,10,0,0"/>
             </StackPanel>
 
-            <!-- 右下角版本号 (新增) -->
+            <!-- 右下角版本号 -->
             <TextBlock Text="{Binding AppVersion}"
                HorizontalAlignment="Right"
                VerticalAlignment="Bottom"
@@ -105,10 +105,10 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE737;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                    <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE90F;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{x:Static properties:Resources.Menu_HostConfig}" FontSize="16"/>
-                        <TextBlock Text="{x:Static properties:Resources.Desc_HostConfig}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,0"/>
+                        <TextBlock Text="{x:Static properties:Resources.Desc_HostConfig}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
             </ui:CardAction>
@@ -122,7 +122,7 @@
                     <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xF5ED;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{x:Static properties:Resources.Menu_VMManagement}" FontSize="16"/>
-                        <TextBlock Text="{x:Static properties:Resources.Desc_VMManagement}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,0"/>
+                        <TextBlock Text="{x:Static properties:Resources.Desc_VMManagement}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
             </ui:CardAction>
@@ -136,7 +136,7 @@
                     <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xF0B9;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{x:Static properties:Resources.Menu_Pcie}" FontSize="16"/>
-                        <TextBlock Text="{x:Static properties:Resources.Desc_Pcie}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,0"/>
+                        <TextBlock Text="{x:Static properties:Resources.Desc_Pcie}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
             </ui:CardAction>
@@ -151,7 +151,7 @@
                     <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE774;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{x:Static properties:Resources.Menu_NetSwitch}" FontSize="16"/>
-                        <TextBlock Text="{x:Static properties:Resources.Desc_NetSwitch}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,0"/>
+                        <TextBlock Text="{x:Static properties:Resources.Desc_NetSwitch}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
             </ui:CardAction>
@@ -162,7 +162,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xE88E;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
+                    <ui:FontIcon Grid.Column="0" FontFamily="{DynamicResource SegoeFluentIcons}" Glyph="&#xECF0;" FontSize="24" Margin="0,0,15,0" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}"/>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="{x:Static properties:Resources.Label_UsbPassthrough}" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" FontSize="16"/>
                         <TextBlock Text="{x:Static properties:Resources.MainPage_UsbPassthroughDesc}" FontSize="13" Foreground="{ui:ThemeResource TextFillColorPrimaryBrush}" Margin="0,4,0,0"/>

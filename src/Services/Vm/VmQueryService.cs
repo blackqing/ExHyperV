@@ -1,5 +1,6 @@
 ﻿using ExHyperV.Models;
 using ExHyperV.Tools;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Management;
@@ -24,9 +25,11 @@ namespace ExHyperV.Services
 
         // --- 静态变量与缓存 ---
 
-        private static readonly Dictionary<string, string> _switchNameCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, string> _switchNameCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, (long Current, long Max, string Type)> _diskSizeCache = new();
-        private static Dictionary<Guid, int> _vmProcessIdCache = new();
+        // VM → 一组 PID：vmwp + 其子 vmmem。GPU-PV 的 GPU 占用 Win11 记在 vmwp、Win10 记在 vmmem
+        // （vmmem 是 vmwp 的子进程、同 VM 账户 SID），故一 VM 需对应多个 PID 才能跨版本命中。
+        private static readonly ConcurrentDictionary<Guid, List<int>> _vmProcessIdCache = new();
         private static DateTime _processIdCacheTimestamp = DateTime.MinValue;
         private List<PerformanceCounter> _gpuCounters = new();
         private static readonly Regex GpuInstanceRegex = new Regex(@"pid_(\d+).*engtype_([a-zA-Z0-9]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -57,7 +60,7 @@ namespace ExHyperV.Services
         private sealed record PerfItem(string WmiName, ulong Read, ulong Write);
         private sealed record MemRuntimeItem(string Id, VmDynamicMemoryData Data);
 
-        // --- 核心查询方法 ---
+        // --- 查询方法 ---
 
         public async Task<List<VmInstance>> GetVmListAsync()
         {
@@ -128,6 +131,10 @@ namespace ExHyperV.Services
                 obj["HostResource"] as string[] ?? Array.Empty<string>()
             ), WmiScope.HyperV);
 
+            // 主机可分区 GPU：Win10 早期 GpuPartitionSettingData.HostResource 只写读空，用它做 GpuName 兜底。
+            var partGpuTask = WmiApi.QueryAsync("SELECT Name FROM Msvm_PartitionableGpu",
+                obj => obj["Name"]?.ToString() ?? "", WmiScope.HyperV);
+
             var pciMapTask = GetHostVideoControllerMapAsync();
 
             var allPortsTask = WmiApi.QueryAsync(
@@ -158,7 +165,7 @@ namespace ExHyperV.Services
 
             await Task.WhenAll(vDiskTask, pDiskTask, hvDiskTask, hostDiskTask,
                 summaryTask, memTask, configTask, gpuPvTask, pciMapTask,
-                allPortsTask, allAllocsTask, allSwitchesTask, guestNetTask);
+                allPortsTask, allAllocsTask, allSwitchesTask, guestNetTask, partGpuTask);
 
             // ── 取出数据 ──────────────────────────────────────────
             var vDisks = vDiskTask.Result.Data ?? new List<DiskAlloc>();
@@ -196,16 +203,28 @@ namespace ExHyperV.Services
                     guestIpMap[key] = item.IPAddresses.ToList();
             }
 
+            // Win10 早期 HostResource 只写读空 → 拿不到 PCI 名。用主机第一块可分区 GPU 的名字兜底
+            // （与 GetVmGpuAdaptersAsync 的 Win10 兜底同源；单卡场景就是它）。
+            string fallbackGpuName = null;
+            foreach (var pg in (partGpuTask.Result.Data ?? new List<string>()))
+            {
+                string pid = ExtractPciId(pg) ?? "";
+                if (!string.IsNullOrEmpty(pid) && pciFriendlyNames.TryGetValue(pid, out var nm)) { fallbackGpuName = nm; break; }
+            }
+
             var gpuMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var setting in gpuPvList)
             {
                 string guid = ExtractFirstGuid(setting.InstanceID) ?? "";
-                if (!string.IsNullOrEmpty(guid) && setting.HostResources.Length > 0)
+                if (string.IsNullOrEmpty(guid)) continue;
+                string gpuName = null;
+                if (setting.HostResources.Length > 0)
                 {
                     string pciId = ExtractPciId(setting.HostResources[0]) ?? "";
-                    if (!string.IsNullOrEmpty(pciId) && pciFriendlyNames.TryGetValue(pciId, out var gpuName))
-                        gpuMap[guid] = gpuName;
+                    if (!string.IsNullOrEmpty(pciId)) pciFriendlyNames.TryGetValue(pciId, out gpuName);
                 }
+                if (string.IsNullOrEmpty(gpuName)) gpuName = fallbackGpuName;   // Win10 兜底
+                if (!string.IsNullOrEmpty(gpuName)) gpuMap[guid] = gpuName;
             }
 
             foreach (var sw in allSwitches)
@@ -265,7 +284,7 @@ namespace ExHyperV.Services
                 if (vmAdaptersMap.TryGetValue(vmGuidKey, out var adapters))
                 {
                     foreach (var a in adapters) vmInfo.NetworkAdapters.Add(a);
-                    vmInfo.MacAddress = adapters.FirstOrDefault()?.MacAddress ?? "00-00-00-00-00-00";
+                    vmInfo.MacAddress = adapters.FirstOrDefault()?.MacAddress ?? "00:00:00:00:00:00";
                     vmInfo.IpAddress = adapters
                         .SelectMany(a => a.IpAddresses ?? Enumerable.Empty<string>())
                         .FirstOrDefault(ip => !string.IsNullOrWhiteSpace(ip) && !ip.Contains(':'))
@@ -303,7 +322,7 @@ namespace ExHyperV.Services
 
                         if (dNum != -1 && osDiskMap.TryGetValue(dNum, out var hostInfo))
                         {
-                            vmInfo.Disks.Add(new VmDiskDetails
+                            vmInfo.Disks.Add(new VmDiskItem
                             {
                                 Name = hostInfo.Model,
                                 Path = $"PhysicalDrive{dNum}",
@@ -318,7 +337,7 @@ namespace ExHyperV.Services
                     {
                         long size = 0;
                         try { if (File.Exists(cleanPath)) size = new FileInfo(cleanPath).Length; } catch { }
-                        vmInfo.Disks.Add(new VmDiskDetails
+                        vmInfo.Disks.Add(new VmDiskItem
                         {
                             Name = Path.GetFileName(cleanPath),
                             Path = cleanPath,
@@ -330,7 +349,7 @@ namespace ExHyperV.Services
                     else
                     {
                         var (current, max, diskType) = GetDiskSizes(cleanPath);
-                        vmInfo.Disks.Add(new VmDiskDetails
+                        vmInfo.Disks.Add(new VmDiskItem
                         {
                             Name = Path.GetFileName(cleanPath),
                             Path = cleanPath,
@@ -351,7 +370,8 @@ namespace ExHyperV.Services
                     vmInfo.Version = config.Ver;
                 }
 
-                vmInfo.OsType = NotesTag.Get(s.Notes, "OSType") ?? "Windows";
+                var osTypeTag = NotesTag.Get(s.Notes, "OSType");
+                vmInfo.OsType = string.IsNullOrEmpty(osTypeTag) ? "Windows" : osTypeTag;
                 vmInfo.CpuCount = s.Cpu;
                 vmInfo.MemoryGb = Math.Round(startupRam / 1024.0, 1);
                 vmInfo.AssignedMemoryGb = Math.Round((s.MemUsage > 0 ? s.MemUsage : startupRam) / 1024.0, 1);
@@ -359,6 +379,7 @@ namespace ExHyperV.Services
                 vmInfo.GpuName = gpuMap.TryGetValue(vmGuidKey, out var gName) ? gName : null;
                 // Model 不做 transient 状态机；只填 raw 字段（VM 层通过 Apply→SyncBackendData 处理）
                 vmInfo.StateText = VmMapper.MapStateCodeToText(s.State);
+                vmInfo.StateCode = s.State;
                 vmInfo.RawUptime = TimeSpan.FromMilliseconds(s.Uptime);
                 resultList.Add(vmInfo);
             }
@@ -433,12 +454,15 @@ namespace ExHyperV.Services
                 }
                 catch { }
 
-                var usageByPid = new Dictionary<int, GpuUsageData>();
+                // 按 VM 聚合（一 VM 一组 PID）：isBound = 该组任一 PID 有 GPU 实例；用量按 VM 累加。
+                var usageByVm = new Dictionary<Guid, GpuUsageData>();
+                var pidToVm = new Dictionary<int, Guid>();
                 foreach (var pair in _vmProcessIdCache)
                 {
-                    int pid = pair.Value;
-                    bool isBound = allGpuInstances.Any(n => n.Contains($"pid_{pid}_", StringComparison.OrdinalIgnoreCase));
-                    usageByPid[pid] = new GpuUsageData { IsDriverBound = isBound };
+                    bool isBound = pair.Value.Any(pid =>
+                        allGpuInstances.Any(n => n.Contains($"pid_{pid}_", StringComparison.OrdinalIgnoreCase)));
+                    usageByVm[pair.Key] = new GpuUsageData { IsDriverBound = isBound };
+                    foreach (var pid in pair.Value) pidToVm[pid] = pair.Key;
                 }
 
                 foreach (var counter in _gpuCounters.ToList())
@@ -446,16 +470,16 @@ namespace ExHyperV.Services
                     try
                     {
                         var m = GpuInstanceRegex.Match(counter.InstanceName);
-                        if (m.Success && int.TryParse(m.Groups[1].Value, out int pid) && usageByPid.ContainsKey(pid))
+                        if (m.Success && int.TryParse(m.Groups[1].Value, out int pid) && pidToVm.TryGetValue(pid, out var vmId))
                         {
                             float val = counter.NextValue();
-                            var d = usageByPid[pid];
+                            var d = usageByVm[vmId];
                             string type = m.Groups[2].Value.ToUpper();
                             if (type.Contains("3D")) d.Gpu3d += val;
                             else if (type.Contains("COPY")) d.GpuCopy += val;
                             else if (type.Contains("ENCODE")) d.GpuEncode += val;
                             else if (type.Contains("DECODE")) d.GpuDecode += val;
-                            usageByPid[pid] = d;
+                            usageByVm[vmId] = d;
                         }
                     }
                     catch
@@ -466,8 +490,8 @@ namespace ExHyperV.Services
                 }
 
                 foreach (var vm in gpuVms)
-                    if (_vmProcessIdCache.TryGetValue(vm.Id, out int pid))
-                        results[vm.Id] = usageByPid[pid];
+                    if (usageByVm.TryGetValue(vm.Id, out var data))
+                        results[vm.Id] = data;
             }
             catch { }
 
@@ -556,6 +580,16 @@ namespace ExHyperV.Services
             string state = r.Data ?? "Unknown";
             return (state == "3", state);
         }
+
+        /// <summary>获取虚拟机配置目录（ConfigurationDataRoot）；用于"打开虚拟机文件夹"。</summary>
+        public async Task<string?> GetVmConfigRootAsync(string vmName)
+        {
+            var resp = await WmiApi.QueryFirstAsync(
+                $"SELECT ConfigurationDataRoot FROM Msvm_VirtualSystemSettingData WHERE ElementName = '{WmiApi.Escape(vmName)}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'",
+                obj => obj["ConfigurationDataRoot"]?.ToString(),
+                WmiScope.HyperV);
+            return resp.HasData ? resp.Data : null;
+        }
         // --- 私有辅助方法：磁盘与硬件映射 ---
 
         private (long Current, long Max, string DiskType) GetDiskSizes(string path)
@@ -620,18 +654,31 @@ namespace ExHyperV.Services
         private async Task RefreshVmPidCache(List<VmInstance> runningGpuVms)
         {
             _vmProcessIdCache.Clear();
+            // 同时取 vmwp（命令行带 VM GUID）与 vmmem（无命令行，靠 PPID 认亲到其 vmwp）。
             var resp = await WmiApi.QueryAsync(
-                "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'vmwp.exe'",
-                obj => new { Pid = Convert.ToInt32(obj["ProcessId"]), Cmd = obj["CommandLine"]?.ToString() ?? "" },
+                "SELECT ProcessId, ParentProcessId, Name, CommandLine FROM Win32_Process WHERE Name = 'vmwp.exe' OR Name = 'vmmem'",
+                obj => new
+                {
+                    Pid = Convert.ToInt32(obj["ProcessId"]),
+                    Ppid = Convert.ToInt32(obj["ParentProcessId"]),
+                    Name = obj["Name"]?.ToString() ?? "",
+                    Cmd = obj["CommandLine"]?.ToString() ?? ""
+                },
                 WmiScope.CimV2);
 
             if (resp.Data != null)
+            {
+                var vmwps = resp.Data.Where(p => p.Name.Equals("vmwp.exe", StringComparison.OrdinalIgnoreCase)).ToList();
+                var vmmems = resp.Data.Where(p => p.Name.Equals("vmmem", StringComparison.OrdinalIgnoreCase)).ToList();
                 foreach (var vm in runningGpuVms)
                 {
-                    var proc = resp.Data
-                        .FirstOrDefault(p => p.Cmd.Contains(vm.Id.ToString(), StringComparison.OrdinalIgnoreCase));
-                    if (proc != null) _vmProcessIdCache[vm.Id] = proc.Pid;
+                    var wp = vmwps.FirstOrDefault(p => p.Cmd.Contains(vm.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+                    if (wp == null) continue;
+                    var pids = new List<int> { wp.Pid };                                  // Win11：占用在 vmwp
+                    pids.AddRange(vmmems.Where(m => m.Ppid == wp.Pid).Select(m => m.Pid)); // Win10：占用在子 vmmem
+                    _vmProcessIdCache[vm.Id] = pids;
                 }
+            }
             _processIdCacheTimestamp = DateTime.Now;
         }
 
@@ -644,7 +691,7 @@ namespace ExHyperV.Services
                 if (!PerformanceCounterCategory.Exists("GPU Engine")) return;
                 var category = new PerformanceCounterCategory("GPU Engine");
                 var instances = category.GetInstanceNames();
-                var targets = _vmProcessIdCache.Values.Select(p => $"pid_{p}_").ToList();
+                var targets = _vmProcessIdCache.Values.SelectMany(pids => pids).Distinct().Select(p => $"pid_{p}_").ToList();
                 foreach (var name in instances)
                 {
                     if (targets.Any(t => name.StartsWith(t, StringComparison.OrdinalIgnoreCase)))
@@ -674,6 +721,6 @@ namespace ExHyperV.Services
 
         private static string FormatMac(string raw) =>
             string.IsNullOrEmpty(raw) ? "" :
-            Regex.Replace(raw.Replace(":", "").Replace("-", ""), "(.{2})", "$1-").TrimEnd('-').ToUpperInvariant();
+            Regex.Replace(raw.Replace(":", "").Replace("-", ""), "(.{2})", "$1:").TrimEnd(':').ToUpperInvariant();   // 冒号分隔，与 MacAddress.Format 统一（实时刷新与网络页一致）
     }
 }

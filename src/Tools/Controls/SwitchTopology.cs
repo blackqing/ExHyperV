@@ -1,5 +1,4 @@
 ﻿using System.Collections.ObjectModel;
-using System.Net;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Shapes;
@@ -19,12 +18,17 @@ namespace ExHyperV.Tools
         public string SwitchName { get => (string)GetValue(SwitchNameProperty); set => SetValue(SwitchNameProperty, value); }
 
         public static readonly DependencyProperty NetworkModeProperty =
-            DependencyProperty.Register("NetworkMode", typeof(string), typeof(SwitchTopology), new PropertyMetadata("Isolated", OnPropertiesChanged));
-        public string NetworkMode { get => (string)GetValue(NetworkModeProperty); set => SetValue(NetworkModeProperty, value); }
+            DependencyProperty.Register("NetworkMode", typeof(SwitchMode), typeof(SwitchTopology), new PropertyMetadata(SwitchMode.Isolated, OnPropertiesChanged));
+        public SwitchMode NetworkMode { get => (SwitchMode)GetValue(NetworkModeProperty); set => SetValue(NetworkModeProperty, value); }
 
         public static readonly DependencyProperty UpstreamAdapterProperty =
             DependencyProperty.Register("UpstreamAdapter", typeof(string), typeof(SwitchTopology), new PropertyMetadata(string.Empty, OnPropertiesChanged));
         public string UpstreamAdapter { get => (string)GetValue(UpstreamAdapterProperty); set => SetValue(UpstreamAdapterProperty, value); }
+
+        // 由 ViewModel 按 GUID 算好后绑进来,别在这里靠名字自己猜(见 SwitchViewModel.DefaultSwitchId)
+        public static readonly DependencyProperty IsDefaultSwitchProperty =
+            DependencyProperty.Register("IsDefaultSwitch", typeof(bool), typeof(SwitchTopology), new PropertyMetadata(false, OnPropertiesChanged));
+        public bool IsDefaultSwitch { get => (bool)GetValue(IsDefaultSwitchProperty); set => SetValue(IsDefaultSwitchProperty, value); }
 
         private const double IconSize = 28;
         private const double NodeSpacing = 120;
@@ -55,12 +59,6 @@ namespace ExHyperV.Tools
         private static void OnPropertiesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => (d as SwitchTopology)?.Redraw();
         private void OnCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => Redraw();
 
-        private static string ParseIPv4(string s) =>
-            string.IsNullOrEmpty(s) ? "" :
-            s.Trim('{', '}').Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-             .FirstOrDefault(ip => IPAddress.TryParse(ip, out var p) &&
-                                   p.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) ?? "";
-
         private void DrawLine(double x1, double y1, double x2, double y2)
         {
             var line = new Line { X1 = x1, Y1 = y1, X2 = x2, Y2 = y2, StrokeThickness = LineThickness };
@@ -76,7 +74,7 @@ namespace ExHyperV.Tools
             Children.Add(icon);
 
             var panel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Orientation = Orientation.Vertical };
-            var nameText = new UiTextBlock { Text = name, FontSize = 12, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 0, -2) };
+            var nameText = new UiTextBlock { Text = name, FontSize = 12, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 0, 1) };
             if (wrap) { nameText.MaxWidth = NodeSpacing - 10; nameText.TextWrapping = TextWrapping.Wrap; }
             nameText.SetResourceReference(UiTextBlock.ForegroundProperty, "TextFillColorPrimaryBrush");
             panel.Children.Add(nameText);
@@ -88,7 +86,7 @@ namespace ExHyperV.Tools
             }
             if (!string.IsNullOrEmpty(ip))
             {
-                var ipText = new UiTextBlock { Text = ip, FontSize = 11, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, -4, 0, 0) };
+                var ipText = new UiTextBlock { Text = ip, FontSize = 11, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 1, 0, 0) };
                 ipText.SetResourceReference(UiTextBlock.ForegroundProperty, "TextFillColorPrimaryBrush");
                 panel.Children.Add(ipText);
             }
@@ -116,8 +114,8 @@ namespace ExHyperV.Tools
             Children.Clear();
             if (ItemsSource == null) return;
 
-            bool isDefaultSwitch = SwitchName == "Default Switch";
-            bool hasUpstream = (NetworkMode == "Bridge" || NetworkMode == "NAT") &&
+            bool isDefaultSwitch = IsDefaultSwitch;
+            bool hasUpstream = (NetworkMode == SwitchMode.Bridge || NetworkMode == SwitchMode.NAT) &&
                                (!string.IsNullOrEmpty(UpstreamAdapter) || isDefaultSwitch);
             bool isMultiRow = ItemsSource.Count > 6;
 
@@ -143,7 +141,7 @@ namespace ExHyperV.Tools
 
             CreateNode("Switch", SwitchName, "", "", centerX, SwitchY);
 
-            var clients = ItemsSource.Select(a => (Name: a.VMName, Ip: ParseIPv4(a.IPAddresses), Mac: a.MacAddress)).ToList();
+            var clients = ItemsSource.Select(a => (Name: a.Name, Ip: a.IpAddress, Mac: a.MacAddress)).ToList();
 
             if (clients.Count == 0)
             {

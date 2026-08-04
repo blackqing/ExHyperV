@@ -10,7 +10,7 @@ using System.Collections.Concurrent;
 
 namespace ExHyperV.Services
 {
-    public class UsbVmbusService
+    public static class UsbVmbusService
     {
         public static ConcurrentDictionary<string, string> ActiveTunnels { get; } = new();
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> _activeCts = new();
@@ -18,14 +18,15 @@ namespace ExHyperV.Services
         private static readonly Guid ServiceId = Guid.Parse("45784879-7065-7256-5553-4250726F7879");
         private const int ProxyBufSize = 512 * 1024;
 
-        public UsbVmbusService()
+        static UsbVmbusService()
         {
-            try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.RealTime; } catch { }
+            // High 足以保证 USB 转发低延迟；RealTime 会饿死系统输入/磁盘线程，有整机卡死风险，绝不用于用户态进程
+            try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High; } catch { }
         }
 
-        private void Log(string msg) => Debug.WriteLine($"[ExHyperV-USB] [{DateTime.Now:HH:mm:ss.fff}] {msg}");
+        private static void Log(string msg) => Debug.WriteLine($"[ExHyperV-USB] [{DateTime.Now:HH:mm:ss.fff}] {msg}");
 
-        public async Task StopTunnelAsync(string busId)
+        public static async Task StopTunnelAsync(string busId)
         {
             if (_activeCts.TryRemove(busId, out var cts))
             {
@@ -38,7 +39,7 @@ namespace ExHyperV.Services
             await Task.Delay(500);
         }
 
-        public async Task AutoRecoverTunnel(string busId, string vmName)
+        public static async Task AutoRecoverTunnel(string busId, string vmName)
         {
             if (_activeCts.ContainsKey(busId)) await StopTunnelAsync(busId);
 
@@ -65,7 +66,7 @@ namespace ExHyperV.Services
             }
         }
 
-        public async Task StartTunnelAsync(Guid vmId, string busId, CancellationToken ct)
+        public static async Task StartTunnelAsync(Guid vmId, string busId, CancellationToken ct)
         {
             // 创建 VMBus socket
             var hvResp = VmbusApi.CreateVmbusSocket();
@@ -76,11 +77,13 @@ namespace ExHyperV.Services
             var hv = VmbusApi.WrapHandle(hvHandle);
             Socket? tcp = null;
 
+            // 句柄唯一所有者是托管 Socket(hv/tcp)：取消与收尾统一走 Dispose(幂等)，泵线程只借用
+            // 裸句柄、断线只报告不关闭——句柄号会被系统复用，多方 closesocket 会误关进程内无关连接。
             var completion = new TaskCompletionSource<bool>();
             ct.Register(() =>
             {
-                VmbusApi.CloseSocket(hvHandle);
-                if (tcp != null) VmbusApi.CloseSocket(tcp.SafeHandle.DangerousGetHandle());
+                try { hv.Dispose(); } catch { }
+                try { tcp?.Dispose(); } catch { }
                 completion.TrySetResult(true);
             });
 
@@ -107,7 +110,7 @@ namespace ExHyperV.Services
 
                 nint tcpHandle = tcp.SafeHandle.DangerousGetHandle();
 
-                // 【配置同步】黄金 8KB，千万别改
+                // 配置同步缓冲固定 8KB，勿改
                 int optSmall = 8192;
                 VmbusApi.SetAckFrequency(tcpHandle, 1);
                 VmbusApi.SetNoDelay(tcpHandle);
@@ -127,7 +130,7 @@ namespace ExHyperV.Services
             }
         }
 
-        private unsafe void StartNativePump(nint sIn, nint sOut, string label, Action onFault, CancellationToken ct)
+        private static unsafe void StartNativePump(nint sIn, nint sOut, string label, Action onFault, CancellationToken ct)
         {
             new Thread(() =>
             {
@@ -147,15 +150,13 @@ namespace ExHyperV.Services
                 finally
                 {
                     NativeMemory.AlignedFree(bufferPtr);
-                    VmbusApi.CloseSocket(sIn);
-                    VmbusApi.CloseSocket(sOut);
-                    onFault?.Invoke();
+                    onFault?.Invoke();   // 只报告断线；句柄由 StartTunnelAsync 收尾统一 Dispose
                 }
             })
             { IsBackground = true, Name = $"NativePump_{label}" }.Start();
         }
 
-        public async Task WatchdogLoopAsync(CancellationToken globalCt)
+        public static async Task WatchdogLoopAsync(CancellationToken globalCt)
         {
             while (!globalCt.IsCancellationRequested)
             {
@@ -168,10 +169,10 @@ namespace ExHyperV.Services
             }
         }
 
-        public async Task<bool> EnsureDeviceSharedAsync(string busId)
+        public static async Task<bool> EnsureDeviceSharedAsync(string busId)
             => await RunUsbIpCommand($"bind --busid {busId}");
 
-        private async Task<bool> RunUsbIpCommand(string args)
+        private static async Task<bool> RunUsbIpCommand(string args)
         {
             try
             {
@@ -188,7 +189,7 @@ namespace ExHyperV.Services
             catch { return false; }
         }
 
-        public async Task<List<UsbTargetVm>> GetRunningVMsAsync()
+        public static async Task<List<UsbTargetVm>> GetRunningVMsAsync()
         {
             var resp = await WmiApi.QueryAsync(
                 "SELECT Name, ElementName FROM Msvm_ComputerSystem WHERE EnabledState = 2 AND Name <> ElementName",
@@ -204,7 +205,11 @@ namespace ExHyperV.Services
                 .ToList();
         }
 
-        public async Task<List<UsbDevice>> GetUsbIpDevicesAsync()
+        // 整个方法体放进 Task.Run：Process.Start("usbipd") 是同步调用，在 async 方法首个 await 之前会跑在
+        // 调用线程上。本方法常被 UI 线程经 SyncDevicesLoop 的 Dispatcher.InvokeAsync(RefreshListInternal) 调到，
+        // usbipd 进程创建一卡（驱动/服务状态、Defender 扫新进程）就冻住界面(未响应)。移到线程池后 UI 线程只 await、
+        // 消息泵照转。与 WmiApi.QueryAsync 的 Task.Run 同一套路。
+        public static Task<List<UsbDevice>> GetUsbIpDevicesAsync() => Task.Run(async () =>
         {
             var list = new List<UsbDevice>();
             try
@@ -231,17 +236,16 @@ namespace ExHyperV.Services
                             {
                                 BusId = m.Groups[1].Value.Trim(),
                                 VidPid = m.Groups[2].Value.Trim(),
-                                Description = m.Groups[3].Value.Trim(),
-                                Status = "Ready"
+                                Description = m.Groups[3].Value.Trim()
                             });
                     }
                 }
             }
             catch { }
             return list;
-        }
+        });
 
-        public void EnsureServiceRegistered()
+        public static void EnsureServiceRegistered()
         {
             try
             {
@@ -250,6 +254,26 @@ namespace ExHyperV.Services
                 key.SetValue("ElementName", "ExHyperV USB Proxy Infrastructure");
             }
             catch { }
+        }
+
+        // 宿主侧 USB 直通前置：usbipd-win 是否已安装。查服务注册表项（每个 Windows 服务在此都有键）+ 默认安装路径兜底；
+        // 不起进程、不依赖 PATH。仅检测宿主——虚拟机侧（usbip-win2 / USBProxy）由用户自理，不在此列。
+        public static bool IsUsbipdInstalled()
+        {
+            try
+            {
+                using var svc = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\usbipd");
+                if (svc != null) return true;
+            }
+            catch { }
+            try
+            {
+                string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (!string.IsNullOrEmpty(pf) && System.IO.File.Exists(System.IO.Path.Combine(pf, "usbipd-win", "usbipd.exe")))
+                    return true;
+            }
+            catch { }
+            return false;
         }
     }
 }

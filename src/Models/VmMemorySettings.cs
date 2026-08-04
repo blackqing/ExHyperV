@@ -22,6 +22,7 @@ namespace ExHyperV.Models
         [ObservableProperty] private int _buffer;
         [ObservableProperty] private int _priority;
         [ObservableProperty] private byte? _backingPageSize;
+        [ObservableProperty] private bool? _hugePagesEnabled;   // 巨页：独立 WMI 属性，与 BackingPageSize 并存(设 true 需 VM 内存按大页对齐)
 
         // --- 实验性功能 ---
         [ObservableProperty] private byte? _backingType;              // 内存后端类型
@@ -49,6 +50,13 @@ namespace ExHyperV.Models
 
         [ObservableProperty] private byte? _memoryEncryptionPolicy;
 
+        // 开启 SGX 必须有 EPC 大小(≥2MB)，否则提交被 Hyper-V 拒（"SGX 内存无效，请分配至少 2 MB"）；无有效值时补合法默认。
+        partial void OnSgxEnabledChanged(bool? value)
+        {
+            if (value == true && (SgxSize == null || SgxSize.Value < 2))
+                SgxSize = 2;
+        }
+
         public VmMemorySettings Clone() => (VmMemorySettings)this.MemberwiseClone();
 
         public void Restore(VmMemorySettings other)
@@ -61,6 +69,7 @@ namespace ExHyperV.Models
             Buffer = other.Buffer;
             Priority = other.Priority;
             BackingPageSize = other.BackingPageSize;
+            HugePagesEnabled = other.HugePagesEnabled;
             MemoryEncryptionPolicy = other.MemoryEncryptionPolicy;
 
             // 实验性功能补齐
