@@ -2,7 +2,48 @@
 
 This table describes the symbolic link (mklink) relationships used to inject host GPU drivers into a Guest VM. 
 
-**Note:** The "Host Source File" is typically located within the host's `C:\Windows\System32\DriverStore\FileRepository\` directory.
+**Note:** ExHyperV mirrors the host's complete `DriverStore\FileRepository` into the guest. The exact package selection below is still required: it limits registry promotion and symbolic-link sources to the packages belonging to the selected physical adapter, so a same-named file from an older driver or another GPU is never chosen accidentally.
+
+## Driver package selection
+
+Package selection happens before any file mapping:
+
+1. Read `InfPath` from the selected adapter's display-class registry key.
+2. Resolve that published `oem*.inf` through SetupAPI to the exact active package directory in `DriverStore\FileRepository`; directory-name and version-string guessing are not used.
+3. Mirror the complete host `FileRepository`, preserving all package subdirectories. Windows and Linux deployments use this same resolved source root. This deliberately favors deployment completeness and future package layouts over copy size.
+4. `CopyINF` is still parsed for source scoping, not to decide which directories get copied. Many entries are separate audio, PCI, I2C or platform devices which GPU-PV does not install. At present AMD's promotion layer consumes `amdocl.inf` (OpenCL/HIP) and `amdwin-*.inf` (Windows support components). Their `DriverVer` must match the selected display INF exactly. A missing or ambiguous optional companion is omitted with a warning; the base GPU deployment continues without mixing driver generations.
+
+Registry-defined `CopyToVm*` sources are restricted to the active display package. Fixed vendor mappings are restricted to the selected package set. AMD OpenCL/HIP mappings are further restricted to the selected `amdocl.inf` package, and AMD Windows-support mappings to the selected `amdwin-*.inf` package. Existing unrelated or older packages in the guest never participate as fallback sources.
+
+For NVIDIA, ExHyperV creates or updates only the offline guest's minimal `nvlddmkm` kernel-service bootstrap: `Type`, `Start`, `ErrorControl`, `Group`, and `ImagePath`. `ImagePath` is built from the exactly selected display package and points to its `nvlddmkm.sys` below `System32\HostDriverStore\FileRepository`. The host's complete `nvlddmkm` service tree is not imported; host PnP bindings (`Enum`), volatile state (`State`), and installed feature-state subkeys do not belong to the guest.
+
+After driver promotion, ExHyperV also copies the selected vendor's existing software/data directory trees in full. NVIDIA covers `NVIDIA Corporation` and `NVIDIA`; AMD covers `AMD` and legacy `ATI Technologies`; Intel covers `Intel` and `Intel Corporation`; Qualcomm covers `Qualcomm` and `Qualcomm Incorporated`. Each name is checked below `Program Files`, `Program Files (x86)`, and `ProgramData`; absent directories are skipped. This preserves file-based runtime consumers such as NVIDIA PhysX/game components, but copying files alone does not register a Store application, service, scheduled task, or COM server that was never installed in the guest.
+
+This document describes deployment mappings only. ExHyperV does not perform runtime API or feature validation after deployment.
+
+Driver catalog files remain inside the copied `HostDriverStore`. The audited NVIDIA, Intel, and AMD paths do not create links named `oemNN.cat`: that number belongs to a particular guest DriverStore database and cannot be inferred from a host GPU package or hard-coded across guests. The existing Qualcomm mapping is retained as legacy behavior until Qualcomm receives the same hardware-backed adaptation pass.
+
+## Registry-defined mappings
+
+Before applying the fixed vendor mappings below, ExHyperV processes the Microsoft GPU-PV promotion rules from the selected display adapter's registry key. Source paths are resolved relative to that adapter's active DriverStore package, including package subdirectories such as `B026261\`.
+
+| Registry Subkey | Guest Target Directory | Replacement Rule |
+| :--- | :--- | :--- |
+| CopyToVmOverwrite | System32 | Always replace the destination |
+| CopyToVmWhenNewer | System32 | For DLL/EXE files, compare FileVersion first; when equal, compare LastWriteTime |
+| CopyToVmOverwriteWow64 | SysWOW64 | Always replace the destination |
+| CopyToVmWhenNewerWow64 | SysWOW64 | For DLL/EXE files, compare FileVersion first; when equal, compare LastWriteTime |
+
+The current AMD display package declares these six mappings dynamically. `Bxxxxxx` is driver-version-specific and is read from the registry rather than hard-coded:
+
+| Host Source File | Guest Target Directory | Guest Target Filename |
+| :--- | :--- | :--- |
+| Bxxxxxx\amfrt64.dll | System32 | amfrt64.dll |
+| Bxxxxxx\atio6axx.dll | System32 | atio6axx.dll |
+| Bxxxxxx\amd_opencl64.dll | System32 | OpenCL.dll |
+| Bxxxxxx\amfrt32.dll | SysWOW64 | amfrt32.dll |
+| Bxxxxxx\atioglxx.dll | SysWOW64 | atioglxx.dll |
+| Bxxxxxx\amd_opencl32.dll | SysWOW64 | OpenCL.dll |
 
 ---
 
@@ -30,7 +71,6 @@ This table describes the symbolic link (mklink) relationships used to inject hos
 | vulkan-1-x64.dll | System32 | vulkan-1.dll |
 | vulkan-1-x64.dll | System32 | vulkan-1-999-0-0-0.dll |
 | vulkaninfo-x64.exe | System32 | vulkaninfo.exe |
-| NV_DISP.CAT | System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE} | oem25.cat |
 | license.txt | System32\drivers\NVIDIA Corporation | license.txt |
 | dbInstaller.exe | System32\drivers\NVIDIA Corporation\Drs | dbInstaller.exe |
 | nvdrsdb.bin | System32\drivers\NVIDIA Corporation\Drs | nvdrsdb.bin |
@@ -91,8 +131,6 @@ This table describes the symbolic link (mklink) relationships used to inject hos
 | ze_loader.dll | System32 | ze_loader.dll |
 | ze_tracing_layer.dll | System32 | ze_tracing_layer.dll |
 | ze_validation_layer.dll | System32 | ze_validation_layer.dll |
-| igdlh.cat | System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE} | oem95.cat |
-| igdlh.cat | System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE} | oem108.cat |
 
 ### SysWOW64 (32-bit)
 | Host Source File | Guest Target Directory | Guest Target Filename |
@@ -107,6 +145,14 @@ This table describes the symbolic link (mklink) relationships used to inject hos
 | vulkan-1-32.dll | SysWOW64 | vulkan-1-999-0-0-0.dll |
 | vulkaninfo-32.exe | SysWOW64 | vulkaninfo.exe |
 | vulkaninfo-32.exe | SysWOW64 | vulkaninfo-1-999-0-0-0.exe |
+
+### Intel runtime registry compatibility
+
+The Intel file mappings above are only the binary-promotion layer. ExHyperV also copies the application-facing runtime values from the **selected GPU-PV adapter's** display-class key into the offline guest SYSTEM hive. It preserves the registry value type and rewrites only `System32\DriverStore` paths to `System32\HostDriverStore`.
+
+The selected adapter is resolved from its `GPUPARAV` instance path through `Enum\<device>\Driver`; the display-class number is not hard-coded. Windows exposes that host adapter registry path to Intel NEO through `KMTQAITYPE_UMDRIVERPRIVATE`, so the same numbered guest class key is populated before the virtual render device starts. The copied values cover the installed driver's OpenCL, Level Zero, OpenGL, Vulkan, VPL/MDF, content-protection, and Intel Control API registrations when those values exist. Physical-device D3D UMD, WSL, and Android-cabinet registrations are deliberately left to the virtual render stack rather than copied wholesale.
+
+Intel's Windows Level Zero loader discovers drivers by enumerating present display DEVNODEs and reading `LevelZeroDriverPath` from each device software key. The GPU-PV virtual render device software key is first created at guest boot, after ExHyperV's offline deployment. To make Level Zero available on that first boot without a logon script or a second deployment pass, ExHyperV additionally places the selected Intel path on the already-installed Microsoft Hyper-V Video display key. This adds one discovery entry without setting `ZE_ENABLE_ALT_DRIVERS` and therefore does not disable discovery of other display or compute-accelerator drivers.
 
 ---
 
@@ -133,17 +179,31 @@ This table describes the symbolic link (mklink) relationships used to inject hos
 | atieah64.exe | System32 | atieah64.exe |
 | EEURestart.exe | System32 | EEURestart.exe |
 | GameManager64.dll | System32 | GameManager64.dll |
+| amdmiracast.dll | System32 | amdmiracast.dll |
+| amf-mft-mjpeg-decoder64.dll | System32 | amf-mft-mjpeg-decoder64.dll |
+| atidemgy.dll | System32 | atidemgy.dll |
+| atimuixx.dll | System32 | atimuixx.dll |
 | atiapfxx.blb | System32 | atiapfxx.blb |
 | ativvsva.dat | System32 | ativvsva.dat |
 | ativvsvl.dat | System32 | ativvsvl.dat |
 | AMDKernelEvents.mc | System32 | AMDKernelEvents.man |
 | detoured64.dll | System32 | detoured.dll |
-| amdkmpfd.ctz | System32\AMD\amdkmpfd | amdkmpfd.ctz |
-| amdkmpfd.itz | System32\AMD\amdkmpfd | amdkmpfd.itz |
-| amdkmpfd.stz | System32\AMD\amdkmpfd | amdkmpfd.stz |
-| u0418637.cat | System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE} | oem43.cat |
-| amdvlk64.dll | System32 | amdvlk64.dll |
-| amdvlk64.dll | System32 | vulkan-1.dll |
+| vulkan64.dll | System32 | vulkan-1.dll |
+| vulkan64.dll | System32 | vulkan-1-999-0-0-0.dll |
+| vulkaninfo64.exe | System32 | vulkaninfo.exe |
+| vulkaninfo64.exe | System32 | vulkaninfo-1-999-0-0-0.exe |
+| amd_comgr_2.dll | System32 | amd_comgr_2.dll |
+| amdhip64_6.dll | System32 | amdhip64_6.dll |
+| amdmmcl.dll | System32 | amdmmcl.dll |
+| amdmmcl6.dll | System32 | amdmmcl6.dll |
+| clinfo.exe | System32 | clinfo.exe |
+| hiprt02000_amd.hipfb | System32 | hiprt02000_amd.hipfb |
+| hiprt0200064.dll | System32 | hiprt0200064.dll |
+| oro_compiled_kernels.hipfb | System32 | oro_compiled_kernels.hipfb |
+| amdlogum.exe | System32 | amdlogum.exe |
+| dgtrayicon.exe | System32 | dgtrayicon.exe |
+| Rapidfire64.dll | System32 | Rapidfire64.dll |
+| RapidFireServer64.dll | System32 | RapidFireServer64.dll |
 
 ### SysWOW64 (32-bit)
 | Host Source File | Guest Target Directory | Guest Target Filename |
@@ -160,11 +220,33 @@ This table describes the symbolic link (mklink) relationships used to inject hos
 | atisamu32.dll | SysWOW64 | atisamu32.dll |
 | GameManager32.dll | SysWOW64 | GameManager32.dll |
 | atiadlxy.dll | SysWOW64 | atiadlxx.dll |
+| amdsacli32.dll | SysWOW64 | amdsacli32.dll |
+| amf-mft-mjpeg-decoder32.dll | SysWOW64 | amf-mft-mjpeg-decoder32.dll |
+| atiadlxy.dll | SysWOW64 | atiadlxy.dll |
+| atieah32.exe | SysWOW64 | atieah32.exe |
 | detoured32.dll | SysWOW64 | detoured.dll |
 | atiapfxx.blb | SysWOW64 | atiapfxx.blb |
 | ativvsva.dat | SysWOW64 | ativvsva.dat |
 | ativvsvl.dat | SysWOW64 | ativvsvl.dat |
-| amdvlk32.dll | SysWOW64 | vulkan-1.dll |
+| vulkan32.dll | SysWOW64 | vulkan-1.dll |
+| vulkan32.dll | SysWOW64 | vulkan-1-999-0-0-0.dll |
+| vulkaninfo32.exe | SysWOW64 | vulkaninfo.exe |
+| vulkaninfo32.exe | SysWOW64 | vulkaninfo-1-999-0-0-0.exe |
+| amd_comgr32.dll | SysWOW64 | amd_comgr32.dll |
+| Rapidfire.dll | SysWOW64 | Rapidfire.dll |
+| RapidFireServer.dll | SysWOW64 | RapidFireServer.dll |
+
+### AMD companion-package selection
+
+The OpenCL/HIP files are selected from the `amdocl.inf_amd64_*` package whose INF is declared by the active display INF and whose normalized `DriverVer` exactly matches the active display INF. AMDWIN files are selected the same way: the exact `amdwin-*.inf` name comes from the selected display INF's `CopyINF` directive (for example, `amdwin-u0202642.inf`), rather than being inferred from a package-directory name or timestamp. If a declared companion does not have exactly one same-version match, it is omitted and its mappings produce warnings; the base deployment continues. A companion not declared by the display INF is also omitted rather than selecting an unrelated package.
+
+RapidFire and `hiprt0200064.dll` import the Microsoft Visual C++ runtime. ExHyperV promotes the AMD-owned files but does not install or replace the machine-wide VC++ runtime; applications which require these optional components must satisfy that Microsoft prerequisite separately.
+
+### AMD MFT registry behavior
+
+ExHyperV does not synthesize values inside an offline GPU-PV display-class instance. Windows creates or reuses the active `PCI\VEN_1414&DEV_008E` class instance on the next guest boot, and stale instances can remain after a GPU partition is removed and assigned again. Therefore an offline deployment cannot reliably identify the class instance which will become active.
+
+Validation showed the same 7 video encoders and 11 video decoders before and after adding the four DDA-only class values (`MFTFlags`, `OutputTypes`, and two `EnableDecoders` values). They are not required for the verified GPU-PV MFT functionality. The required 32-bit and 64-bit MJPEG decoder DLLs are promoted by the file mappings above; those file mappings changed the 32-bit MJPEG load result from failure to success.
 
 ---
 

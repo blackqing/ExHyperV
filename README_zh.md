@@ -432,14 +432,17 @@ GPU-PV 是一种半虚拟化技术，它允许多个虚拟机共享使用物理 
 | **Nvidia** | RTX 4080 Super | Ada Lovelace | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | RTX 2080 Super | Turing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | GTX 1050 | Pascal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| **Nvidia** | Tesla P100-PCIE-16GB | Pascal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | GT 210 | Tesla | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 不支持 |
 | **Nvidia** | Tesla V100-SXM2-16GB | Volta | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 启动会导致宿主崩溃 #95 |
 | **Intel**| Iris Xe Graphics| Xe-LP | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺| 
+| **Intel**| A310 | Xe-HPG | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺|
 | **Intel**| A380 | Xe-HPG | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺|
 | **Intel**| UHD Graphics 730 | Xe-LP | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺|
 | **Intel**| UHD Graphics 620 Mobile | Generation 9.5 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺|
 | **Intel**| HD Graphics 530 | Generation 9.0 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 不支持 |
 | **AMD** | Radeon Vega 3 | GCN 5.0 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | 硬件识别残缺|
+| **AMD** | RX 5500 XT | RDNA 1.0 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **AMD** | Radeon 8060S | RDNA 3.5 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | 硬件识别残缺 |
 | **AMD** | Radeon 890M | RDNA 3.5 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 启动会导致宿主崩溃 |
 | **Moore Threads** | MTT S80 | MUSA | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 不支持 |
@@ -508,7 +511,7 @@ $n="CheckMMIO_$(Get-Random)";New-VM $n -Gen 2 -NoVHD|Out-Null;Set-VM $n -Automat
 
 这是一个可选项，需要添加多张显卡时，可以取消勾选以免每次都导入驱动。
 
-- 对于Windows虚拟机，将全量注入宿主驱动文件夹到虚拟机指定分区，如果是 Nvidia 显卡还会添加额外修复，例如注册表。同时，会为虚拟机的 System32 目录下创建某些驱动文件的链接文件，具体映射关系参考[drivermapping.md](https://github.com/Justsenger/ExHyperV/blob/main/doc/drivermapping.md).
+- 对于 Windows 虚拟机，将全量注入宿主驱动文件夹到虚拟机指定分区。对于 NVIDIA，ExHyperV 只会创建从 `HostDriverStore` 加载当前所选 `nvlddmkm.sys` 所需的最小 `nvlddmkm` 服务值，不会导入宿主完整的 NVIDIA 服务树。同时，会为虚拟机的 System32 目录创建部分驱动文件的链接，具体映射关系参考 [drivermapping.md](https://github.com/Justsenger/ExHyperV/blob/main/doc/drivermapping.md)。
 
 - 对于Linux虚拟机，会执行 SSH 自动化流程进行模块编译和驱动安装，兼容列表之外的系统或内核还需更多测试。
 
@@ -713,6 +716,7 @@ PCIe 直通以 PCIe 设备为单位查找可分配设备。如果设备未显示
 | **Nvidia** | RTX 5090 | Blackwell 2.0 | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4090 | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4080 Super | Ada Lovelace | ✅ | ✅ | ✅ |
+| **Nvidia** | RTX 4070 Super | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4070 | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 2080 Super | Turing | ✅ | ✅ | ✅ |
 | **Nvidia** | GTX 1660 Super | Turing | ✅ | ✅ | ✅ |
@@ -720,12 +724,16 @@ PCIe 直通以 PCIe 设备为单位查找可分配设备。如果设备未显示
 | **Nvidia** | GT 1030 | Pascal | ✅ | ✅ | ✅ |
 | **Nvidia** | GT 210 | Tesla | ✅ | ✅ | ❌ |
 | **Nvidia** | Tesla V100-SXM2-16GB | Volta | ✅ | ✅ | ❌ |
+| **Nvidia** | Tesla P100-PCIE-16GB | Pascal | ✅ | ✅ | ❌ |
 | **Intel** | DG1 | Xe-LP | ✅ | ❌ | [特定驱动](https://www.shengqipc.cn/d21.html) ✅ |
+| **Intel** | A310 | Xe-HPG | Code 43 ❌ | ✅ | ❌ |
 | **Intel** | A380 | Xe-HPG | Code 43 ❌ | ✅ | ❌ |
+| **Intel** | UHD Graphics 770 | Xe | 无法直通❌ | ❌ | ❌ |
 | **Intel**| UHD Graphics 620 Mobile | Generation 9.5 | 无法直通❌ | ❌ | ❌ | 
 | **Intel**| HD Graphics 610 | Generation 9.5 | 无法直通❌ | ❌ | ❌ | 
-| **Intel**| HD Graphics 530 | Generation 9.0 | 无法直通❌ | ❌ | ❌ | ❌ |
+| **Intel**| HD Graphics 530 | Generation 9.0 | 无法直通❌ | ❌ | ❌ |
 | **AMD** | RX 580 | GCN 4.0 | Code 43 ❌ | ✅ | ❌ |
+| **AMD** | RX 5500 XT | RDNA 1.0 | Code 43 ❌ | ✅ | ❌ |
 | **AMD** | Radeon Vega 3 | GCN 5.0 | Code 43 ❌ | ❌ | ❌ |
 | **Qualcomm** | Qualcomm(R) Adreno(TM) X1-85 GPU | Adreno X1 | 不支持❌ | ❌ | ❌ |
 | **Qualcomm** | Qualcomm(R) Adreno(TM) 8cx Gen 3  | Adreno | 不支持❌ | ❌ | ❌ |

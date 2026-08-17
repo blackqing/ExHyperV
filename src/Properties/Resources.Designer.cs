@@ -1224,15 +1224,6 @@ namespace ExHyperV.Properties {
         }
         
         /// <summary>
-        ///   查找类似 Hides virtualization flags, helps bypass detection. 的本地化字符串。
-        /// </summary>
-        public static string Desc_HideHypervisor {
-            get {
-                return ResourceManager.GetString("Desc_HideHypervisor", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   查找类似 Check environment &amp; advanced settings 的本地化字符串。
         /// </summary>
         public static string Desc_HostConfig {
@@ -1328,15 +1319,6 @@ namespace ExHyperV.Properties {
         public static string Desc_RouterGuard {
             get {
                 return ResourceManager.GetString("Desc_RouterGuard", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   查找类似 Maps physical socket topology to guest. 的本地化字符串。
-        /// </summary>
-        public static string Desc_SocketTopo {
-            get {
-                return ResourceManager.GetString("Desc_SocketTopo", resourceCulture);
             }
         }
         
@@ -3859,15 +3841,6 @@ namespace ExHyperV.Properties {
         }
         
         /// <summary>
-        ///   查找类似 Hide Hypervisor ID 的本地化字符串。
-        /// </summary>
-        public static string Menu_HideHypervisor {
-            get {
-                return ResourceManager.GetString("Menu_HideHypervisor", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   查找类似 Host Configuration 的本地化字符串。
         /// </summary>
         public static string Menu_HostConfig {
@@ -3994,15 +3967,6 @@ namespace ExHyperV.Properties {
         }
         
         /// <summary>
-        ///   查找类似 Enable Socket Topology 的本地化字符串。
-        /// </summary>
-        public static string Menu_SocketTopo {
-            get {
-                return ResourceManager.GetString("Menu_SocketTopo", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   查找类似 Switch to Server Edition 的本地化字符串。
         /// </summary>
         public static string Menu_SwitchServer {
@@ -4044,6 +4008,18 @@ namespace ExHyperV.Properties {
         public static string Menu_UnlockHard {
             get {
                 return ResourceManager.GetString("Menu_UnlockHard", resourceCulture);
+            }
+        }
+
+        public static string Cpu_MigrationCompatibilityMode {
+            get {
+                return ResourceManager.GetString("Cpu_MigrationCompatibilityMode", resourceCulture);
+            }
+        }
+
+        public static string Cpu_MigrationCompatibilityModeDesc {
+            get {
+                return ResourceManager.GetString("Cpu_MigrationCompatibilityModeDesc", resourceCulture);
             }
         }
         
@@ -4667,7 +4643,43 @@ namespace ExHyperV.Properties {
                 return ResourceManager.GetString("Desc_NativeNvme", resourceCulture);
             }
         }
-        
+
+        public static string Menu_OpenHclFirmwareFile {
+            get {
+                return ResourceManager.GetString("Menu_OpenHclFirmwareFile", resourceCulture);
+            }
+        }
+
+        public static string Desc_OpenHclFirmwareFile {
+            get {
+                return ResourceManager.GetString("Desc_OpenHclFirmwareFile", resourceCulture);
+            }
+        }
+
+        public static string Error_Host_AzureFeatureSetRegistryUnavailable {
+            get {
+                return ResourceManager.GetString("Error_Host_AzureFeatureSetRegistryUnavailable", resourceCulture);
+            }
+        }
+
+        public static string Error_Host_OpenHclRegistryUnavailable {
+            get {
+                return ResourceManager.GetString("Error_Host_OpenHclRegistryUnavailable", resourceCulture);
+            }
+        }
+
+        public static string Error_Host_OpenHclRegistryChangeFailed {
+            get {
+                return ResourceManager.GetString("Error_Host_OpenHclRegistryChangeFailed", resourceCulture);
+            }
+        }
+
+        public static string Error_VmCreate_OpenHclIgvmPermission {
+            get {
+                return ResourceManager.GetString("Error_VmCreate_OpenHclIgvmPermission", resourceCulture);
+            }
+        }
+
         /// <summary>
         ///   查找类似 Memory settings applied. 的本地化字符串。
         /// </summary>
@@ -4692,6 +4704,15 @@ namespace ExHyperV.Properties {
         public static string Msg_Net_Added {
             get {
                 return ResourceManager.GetString("Msg_Net_Added", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Please create a virtual switch first. 的本地化字符串。
+        /// </summary>
+        public static string Msg_Net_CreateSwitchFirst {
+            get {
+                return ResourceManager.GetString("Msg_Net_CreateSwitchFirst", resourceCulture);
             }
         }
         
@@ -6878,6 +6899,51 @@ namespace ExHyperV.Properties {
                 return ResourceManager.GetString("VmRAMSettings_DescMemMappingMode", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   查找类似 Allows a supported guest to mark low-activity pages so the host can reclaim them first 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_DescColdHint {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_DescColdHint", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Allows a supported guest to mark active pages so the host can page them in and keep them resident preferentially 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_DescHotHint {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_DescHotHint", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Lets a supported guest cooperate with the host on page faults, reducing stalls caused by virtual-backed paging 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_DescEpf {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_DescEpf", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Uses a separate compression store for this VM, improving isolation and accounting with a small management overhead 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_DescCompressStore {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_DescCompressStore", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Allows a supported guest to pin selected guest-physical address ranges at runtime; enabling this does not pin memory by itself 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_DescGpaPinning {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_DescGpaPinning", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   查找类似 Manually limit the maximum number of memory blocks observable by a single virtual NUMA node 的本地化字符串。
@@ -6948,6 +7014,15 @@ namespace ExHyperV.Properties {
         public static string VmRAMSettings_LabelMemAccessMonitor {
             get {
                 return ResourceManager.GetString("VmRAMSettings_LabelMemAccessMonitor", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Memory Access Monitoring Granularity 的本地化字符串。
+        /// </summary>
+        public static string VmRAMSettings_LabelMemAccessGranularity {
+            get {
+                return ResourceManager.GetString("VmRAMSettings_LabelMemAccessGranularity", resourceCulture);
             }
         }
         
@@ -8165,6 +8240,13 @@ namespace ExHyperV.Properties {
             get { return ResourceManager.GetString("Error_VmCreate_RollbackFailed", resourceCulture); }
         }
 
+        /// <summary>
+        ///   Looks up a localized string similar to Creation rollback could not remove these files or directories; please clean them up manually: {0}.
+        /// </summary>
+        public static string Error_VmCreate_ArtifactCleanupFailed {
+            get { return ResourceManager.GetString("Error_VmCreate_ArtifactCleanupFailed", resourceCulture); }
+        }
+
         public static string VmAdvanced_Title {
             get { return ResourceManager.GetString("VmAdvanced_Title", resourceCulture); }
         }
@@ -8560,6 +8642,16 @@ namespace ExHyperV.Properties {
                 return ResourceManager.GetString("Cpu_PerfmonPmuDesc", resourceCulture);
             }
         }
+        public static string Cpu_PerfmonPmuRequired {
+            get {
+                return ResourceManager.GetString("Cpu_PerfmonPmuRequired", resourceCulture);
+            }
+        }
+        public static string Cpu_PerfmonPmuInUse {
+            get {
+                return ResourceManager.GetString("Cpu_PerfmonPmuInUse", resourceCulture);
+            }
+        }
         public static string Cpu_PerfmonLbr {
             get {
                 return ResourceManager.GetString("Cpu_PerfmonLbr", resourceCulture);
@@ -8820,6 +8912,10 @@ namespace ExHyperV.Properties {
             get { return ResourceManager.GetString("Vmcx_IncompleteDda", resourceCulture); }
         }
 
+        public static string Vmcx_IncompleteGpuPv {
+            get { return ResourceManager.GetString("Vmcx_IncompleteGpuPv", resourceCulture); }
+        }
+
         public static string Vmcx_OpFailHr {
             get { return ResourceManager.GetString("Vmcx_OpFailHr", resourceCulture); }
         }
@@ -8966,6 +9062,122 @@ namespace ExHyperV.Properties {
 
         public static string PCIePage_ClassWithChildTypes {
             get { return ResourceManager.GetString("PCIePage_ClassWithChildTypes", resourceCulture); }
+        }
+
+        public static string Label_CpuInstructionSetCapabilities {
+            get { return ResourceManager.GetString("Label_CpuInstructionSetCapabilities", resourceCulture); }
+        }
+
+        public static string Label_CpuInterruptControl {
+            get { return ResourceManager.GetString("Label_CpuInterruptControl", resourceCulture); }
+        }
+
+        public static string Label_CpuProcessorTopology {
+            get { return ResourceManager.GetString("Label_CpuProcessorTopology", resourceCulture); }
+        }
+
+        public static string Label_CpuPerformanceMonitoring {
+            get { return ResourceManager.GetString("Label_CpuPerformanceMonitoring", resourceCulture); }
+        }
+
+        public static string Label_CpuFrequencyControl {
+            get { return ResourceManager.GetString("Label_CpuFrequencyControl", resourceCulture); }
+        }
+
+        public static string Label_CpuMemoryAddressing {
+            get { return ResourceManager.GetString("Label_CpuMemoryAddressing", resourceCulture); }
+        }
+
+        public static string Label_CpuSecurityIsolation {
+            get { return ResourceManager.GetString("Label_CpuSecurityIsolation", resourceCulture); }
+        }
+
+        public static string Label_MemoryMapping {
+            get { return ResourceManager.GetString("Label_MemoryMapping", resourceCulture); }
+        }
+
+        public static string Label_MemoryPageManagement {
+            get { return ResourceManager.GetString("Label_MemoryPageManagement", resourceCulture); }
+        }
+
+        public static string Label_MemoryHardwareExtensions {
+            get { return ResourceManager.GetString("Label_MemoryHardwareExtensions", resourceCulture); }
+        }
+
+        public static string Label_MemoryConfidentialComputing {
+            get { return ResourceManager.GetString("Label_MemoryConfidentialComputing", resourceCulture); }
+        }
+
+        public static string VmPage_MemEncryptionDisabled {
+            get { return ResourceManager.GetString("VmPage_MemEncryptionDisabled", resourceCulture); }
+        }
+
+        public static string VmPage_MemEncryptionIfSupported {
+            get { return ResourceManager.GetString("VmPage_MemEncryptionIfSupported", resourceCulture); }
+        }
+
+        public static string VmPage_MemEncryptionAlways {
+            get { return ResourceManager.GetString("VmPage_MemEncryptionAlways", resourceCulture); }
+        }
+
+        public static string Xaml_OpenHclImage {
+            get { return ResourceManager.GetString("Xaml_OpenHclImage", resourceCulture); }
+        }
+
+        public static string Xaml_Placeholder_OpenHclIgvm {
+            get { return ResourceManager.GetString("Xaml_Placeholder_OpenHclIgvm", resourceCulture); }
+        }
+
+        public static string VmPage_SelectOpenHclIgvm {
+            get { return ResourceManager.GetString("VmPage_SelectOpenHclIgvm", resourceCulture); }
+        }
+
+        public static string VmPage_OpenHclIgvmFilter {
+            get { return ResourceManager.GetString("VmPage_OpenHclIgvmFilter", resourceCulture); }
+        }
+
+        public static string VmPage_OpenHclIgvmRequired {
+            get { return ResourceManager.GetString("VmPage_OpenHclIgvmRequired", resourceCulture); }
+        }
+
+        public static string VmPage_OpenHclRequiresV12 {
+            get { return ResourceManager.GetString("VmPage_OpenHclRequiresV12", resourceCulture); }
+        }
+
+        public static string VmPage_DynMemAlignmentDisabled {
+            get { return ResourceManager.GetString("VmPage_DynMemAlignmentDisabled", resourceCulture); }
+        }
+
+        public static string Label_MemoryAccessTracking {
+            get { return ResourceManager.GetString("Label_MemoryAccessTracking", resourceCulture); }
+        }
+
+        public static string VmRAMSettings_DescMemAccessGranularity {
+            get { return ResourceManager.GetString("VmRAMSettings_DescMemAccessGranularity", resourceCulture); }
+        }
+
+        public static string VmRAMSettings_MemTrackingDisabledHint {
+            get { return ResourceManager.GetString("VmRAMSettings_MemTrackingDisabledHint", resourceCulture); }
+        }
+
+        public static string VmRAMSettings_MemTrackingPerNodeHint {
+            get { return ResourceManager.GetString("VmRAMSettings_MemTrackingPerNodeHint", resourceCulture); }
+        }
+
+        public static string Error_VmPower_WorkerNotFound {
+            get { return ResourceManager.GetString("Error_VmPower_WorkerNotFound", resourceCulture); }
+        }
+
+        public static string Error_VmPower_InvalidWorkerProcess {
+            get { return ResourceManager.GetString("Error_VmPower_InvalidWorkerProcess", resourceCulture); }
+        }
+
+        public static string Error_VmPower_TerminateWorkerFailed {
+            get { return ResourceManager.GetString("Error_VmPower_TerminateWorkerFailed", resourceCulture); }
+        }
+
+        public static string Error_VmPower_StillNotOff {
+            get { return ResourceManager.GetString("Error_VmPower_StillNotOff", resourceCulture); }
         }
 
     }

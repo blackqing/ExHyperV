@@ -6,6 +6,20 @@ using Wpf.Ui.Controls;
 
 namespace ExHyperV.ViewModels
 {
+    public sealed class MemoryBackingTypeOption
+    {
+        public byte Value { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public bool IsEnabled { get; init; } = true;
+    }
+
+    public sealed class MemoryTrackingStateOption
+    {
+        public byte Value { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public bool IsEnabled { get; init; } = true;
+    }
+
     public partial class VirtualMachinesPageViewModel
     {
         // ===== 内存设置模块 =====
@@ -58,17 +72,18 @@ namespace ExHyperV.ViewModels
         }
 
         [RelayCommand]
-        private async Task ApplyMmioSettingsAsync()
+        private async Task ApplyMmioSettingsAsync(string? propertyName)
         {
             if (CurrentViewType != VmDetailViewType.MemorySettings) return;
-            if (SelectedVm?.MmioSettings == null || SelectedVm.IsRunning) return;
+            if (SelectedVm?.MmioSettings == null || SelectedVm.IsRunning || string.IsNullOrEmpty(propertyName)) return;
 
             IsLoadingSettings = true;
             try
             {
-                var result = await VmMmioService.SetSettingsAsync(
+                var result = await VmMmioService.SetSettingAsync(
                     SelectedVm.Name,
-                    SelectedVm.MmioSettings);
+                    SelectedVm.MmioSettings,
+                    propertyName);
 
                 if (!result.Success)
                 {
@@ -76,12 +91,13 @@ namespace ExHyperV.ViewModels
                     if (_originalMmioSettingsCache != null)
                     {
                         using (SuppressApply())
-                            SelectedVm.MmioSettings.Restore(_originalMmioSettingsCache);
+                            RestoreMmioProperty(SelectedVm.MmioSettings, _originalMmioSettingsCache, propertyName);
                     }
                 }
                 else
                 {
-                    _originalMmioSettingsCache = SelectedVm.MmioSettings.Clone();
+                    _originalMmioSettingsCache ??= SelectedVm.MmioSettings.Clone();
+                    RestoreMmioProperty(_originalMmioSettingsCache, SelectedVm.MmioSettings, propertyName);
                 }
             }
             catch (Exception ex)
@@ -90,7 +106,7 @@ namespace ExHyperV.ViewModels
                 if (_originalMmioSettingsCache != null)
                 {
                     using (SuppressApply())
-                        SelectedVm.MmioSettings.Restore(_originalMmioSettingsCache);
+                        RestoreMmioProperty(SelectedVm.MmioSettings, _originalMmioSettingsCache, propertyName);
                 }
             }
             finally
@@ -118,8 +134,7 @@ namespace ExHyperV.ViewModels
                 nameof(VmMemorySettings.SgxEnabled),
                 nameof(VmMemorySettings.CxlEnabled),
                 nameof(VmMemorySettings.EnableGpaPinning),
-                nameof(VmMemorySettings.DynMemOperationAlignment),
-                nameof(VmMemorySettings.HugePagesEnabled)
+                nameof(VmMemorySettings.DynMemOperationAlignment)
                 // MaxMemoryBlocksPerNumaNode 不在此：改数字仅写 model，由"应用"按钮统一下发。
                 // 其 NumberBox 的 Value 绑定须带 UpdateSourceTrigger=PropertyChanged，否则吃默认 LostFocus、应用时读到旧值。
             };
@@ -130,10 +145,12 @@ namespace ExHyperV.ViewModels
 
                 using (SuppressApply())
                 {
+                    NormalizeMemoryBackingSettings(SelectedVm.MemorySettings, e.PropertyName);
                     IsLoadingSettings = true;
                     try
                     {
-                        var result = await VmMemoryService.SetVmMemorySettingsAsync(SelectedVm.Name, SelectedVm.MemorySettings, false);
+                        var result = await VmMemoryService.SetVmMemorySettingsAsync(
+                            SelectedVm.Name, SelectedVm.MemorySettings, false, e.PropertyName);
                         if (!result.Success)
                         {
                             ShowError($"{Properties.Resources.VmPage_ModifyFail}：{result.Message}");
@@ -163,9 +180,13 @@ namespace ExHyperV.ViewModels
         [RelayCommand]
         private async Task ApplyMemorySettingsAsync()
         {
-            // 内存加密开关(ToggleSwitch.Command)等在导航离开时卸载会误触发本命令；运行态改内存会被拒。仅在仍处于内存页时执行。
+            // 部分控件在导航离开、卸载时可能触发命令；运行态改内存也会被拒。仅在仍处于内存页时执行。
             if (CurrentViewType != VmDetailViewType.MemorySettings) return;
             if (SelectedVm?.MemorySettings == null) return;
+
+            using (SuppressApply())
+                NormalizeMemoryBackingSettings(SelectedVm.MemorySettings, null);
+
             IsLoadingSettings = true;
             try
             {
@@ -195,11 +216,59 @@ namespace ExHyperV.ViewModels
         }
         // --- 实验性功能的纯中文数据源 (禁止任何英文) ---
 
-        public List<object> BackingTypeOptions { get; } = new()
+        private static void NormalizeMemoryBackingSettings(VmMemorySettings settings, string? changedProperty)
+        {
+            bool backingTypeChanged = changedProperty == nameof(VmMemorySettings.BackingType);
+            bool pageSizeChanged = changedProperty == nameof(VmMemorySettings.BackingPageSize);
+            bool backingFeatureChanged = changedProperty is
+                nameof(VmMemorySettings.EnableColdHint) or
+                nameof(VmMemorySettings.EnableHotHint) or
+                nameof(VmMemorySettings.EnableEpf) or
+                nameof(VmMemorySettings.EnablePrivateCompressionStore);
+
+            // Only normalize automatic edits for the settings participating in these constraints.
+            // A manual Apply (changedProperty == null) is also normalized as a final safety net.
+            if (!backingTypeChanged && !pageSizeChanged && !backingFeatureChanged && changedProperty != null)
+                return;
+
+            // The setting changed by the user wins: choosing 1 GB pages selects physical backing;
+            // choosing virtual backing while 1 GB pages are active falls back to 2 MB pages.
+            if (settings.BackingPageSize == 2 && settings.BackingType.HasValue)
+            {
+                if (backingTypeChanged && settings.BackingType != 0)
+                    settings.BackingPageSize = 1;
+                else
+                    settings.BackingType = 0;
+            }
+
+            // VMMS rejects heat hints, EPF and private compression stores on physical backing.
+            // Preserve null for properties that are not exposed by the current host.
+            if (settings.BackingType == 0)
+            {
+                if (settings.EnableColdHint == true) settings.EnableColdHint = false;
+                if (settings.EnableHotHint == true) settings.EnableHotHint = false;
+                if (settings.EnableEpf == true) settings.EnableEpf = false;
+                if (settings.EnablePrivateCompressionStore == true) settings.EnablePrivateCompressionStore = false;
+            }
+        }
+
+        private static void RestoreMmioProperty(VmMmioSettings target, VmMmioSettings source, string propertyName)
+        {
+            switch (propertyName)
+            {
+                case nameof(VmMmioSettings.LowSizeMb): target.LowSizeMb = source.LowSizeMb; break;
+                case nameof(VmMmioSettings.HighSizeMb): target.HighSizeMb = source.HighSizeMb; break;
+                case nameof(VmMmioSettings.HighBaseMb): target.HighBaseMb = source.HighBaseMb; break;
+            }
+        }
+
+        public List<MemoryBackingTypeOption> BackingTypeOptions { get; } = new()
 {
-    new { Value = (byte)0, Name = Properties.Resources.VmPage_BackingTypePhysical },
-    new { Value = (byte)1, Name = Properties.Resources.VmPage_BackingTypeVirtual },
-    new { Value = (byte)2, Name = Properties.Resources.VmPage_BackingTypeHybrid }
+    new() { Value = 0, Name = Properties.Resources.VmPage_BackingTypePhysical },
+    new() { Value = 1, Name = Properties.Resources.VmPage_BackingTypeVirtual },
+    // Hybrid backing requires per-vNUMA-node MemoryBackingType configuration, which the UI
+    // does not edit yet. Keep the option visible for discoverability, but do not allow selection.
+    new() { Value = 2, Name = Properties.Resources.VmPage_BackingTypeHybrid, IsEnabled = false }
 };
 
         public List<object> MemoryByteGranularityOptions { get; } = new()
@@ -209,20 +278,27 @@ namespace ExHyperV.ViewModels
     new { Value = (byte)2, Name = Properties.Resources.VmPage_MemGranularityLarge },
     new { Value = (byte)3, Name = Properties.Resources.VmPage_MemGranularityHuge }
 };
-        public List<object> MemoryUintGranularityOptions { get; } = new()
+        public List<object> DynamicMemoryAlignmentOptions { get; } = new()
 {
-    new { Value = (uint)0, Name = Properties.Resources.VmPage_MemGranularityAuto },
+    new { Value = (uint)0, Name = Properties.Resources.VmPage_DynMemAlignmentDisabled },
     new { Value = (uint)1, Name = Properties.Resources.VmPage_MemGranularityStandard },
     new { Value = (uint)2, Name = Properties.Resources.VmPage_MemGranularityLarge },
     new { Value = (uint)3, Name = Properties.Resources.VmPage_MemGranularityHuge }
 };
 
 
-        public List<object> MemoryTrackingStateOptions { get; } = new()
+        public List<MemoryTrackingStateOption> MemoryTrackingStateOptions { get; } = new()
 {
-    new { Value = (byte)0, Name = Properties.Resources.VmPage_MemTrackingDisable },
-    new { Value = (byte)1, Name = Properties.Resources.VmPage_MemTrackingEnable },
-    new { Value = (byte)2, Name = Properties.Resources.VmPage_MemTrackingPerNode }
+    new() { Value = 0, Name = Properties.Resources.VmPage_MemTrackingDisable },
+    new() { Value = 1, Name = Properties.Resources.VmPage_MemTrackingEnable },
+    new() { Value = 2, Name = Properties.Resources.VmPage_MemTrackingPerNode, IsEnabled = false }
+};
+
+        public List<object> MemoryEncryptionPolicyOptions { get; } = new()
+{
+    new { Value = (byte)0, Name = Properties.Resources.VmPage_MemEncryptionDisabled },
+    new { Value = (byte)1, Name = Properties.Resources.VmPage_MemEncryptionIfSupported },
+    new { Value = (byte)2, Name = Properties.Resources.VmPage_MemEncryptionAlways }
 };
 
         public List<object> SgxLaunchControlOptions { get; } = new()

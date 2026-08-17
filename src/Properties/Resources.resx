@@ -591,6 +591,18 @@ The existing NAT switch is: '{0}'</value>
   <data name="MigrationCompatibilityDescription" xml:space="preserve">
     <value>Allows migration across different CPUs.</value>
   </data>
+  <data name="Cpu_MigrationCompatibilityMode" xml:space="preserve">
+    <value>Migration Compatibility Mode</value>
+  </data>
+  <data name="Cpu_MigrationCompatibilityModeDesc" xml:space="preserve">
+    <value>Selects the fixed minimum feature set or the feature set shared by cluster nodes.</value>
+  </data>
+  <data name="CpuEnum_Migration_MinimumFeatureSet" xml:space="preserve">
+    <value>Minimum Feature Set</value>
+  </data>
+  <data name="CpuEnum_Migration_CommonClusterFeatureSet" xml:space="preserve">
+    <value>Common Cluster Feature Set</value>
+  </data>
   <data name="LegacySystemCompatibility" xml:space="preserve">
     <value>Limit CPU features for legacy OS compatibility</value>
   </data>
@@ -604,13 +616,13 @@ The existing NAT switch is: '{0}'</value>
     <value>Controls the number of hardware threads per core exposed to the virtual machine.</value>
   </data>
   <data name="CpuEnum_Smt_Inherit" xml:space="preserve">
-    <value>Inherit from host</value>
+    <value>Automatic</value>
   </data>
   <data name="CpuEnum_Smt_SingleThread" xml:space="preserve">
-    <value>Single thread</value>
+    <value>Off</value>
   </data>
   <data name="CpuEnum_Smt_MultiThread" xml:space="preserve">
-    <value>Multi-threading</value>
+    <value>On</value>
   </data>
   <data name="CpuBinding" xml:space="preserve">
     <value>Cpu Pinning</value>
@@ -1197,6 +1209,9 @@ The existing NAT switch is: '{0}'</value>
   <data name="Msg_Net_Added" xml:space="preserve">
     <value>New network adapter added.</value>
   </data>
+  <data name="Msg_Net_CreateSwitchFirst" xml:space="preserve">
+    <value>Please create a virtual switch first.</value>
+  </data>
   <data name="Error_Net_AddExc" xml:space="preserve">
     <value>Add Exception</value>
   </data>
@@ -1399,13 +1414,13 @@ The existing NAT switch is: '{0}'</value>
     <value>Log copied to clipboard</value>
   </data>
   <data name="Mem_Standard" xml:space="preserve">
-    <value>Standard (4KB)</value>
+    <value>4 KB</value>
   </data>
   <data name="Mem_Large" xml:space="preserve">
-    <value>Large (2MB)</value>
+    <value>2 MB</value>
   </data>
   <data name="Mem_Huge" xml:space="preserve">
-    <value>Huge (1GB)</value>
+    <value>1 GB</value>
   </data>
   <data name="Common_None" xml:space="preserve">
     <value>None</value>
@@ -1481,6 +1496,24 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Desc_NativeNvme" xml:space="preserve">
     <value>Use the native multi-queue NVMe driver instead of SCSI</value>
+  </data>
+  <data name="Menu_OpenHclFirmwareFile" xml:space="preserve">
+    <value>Load OpenHCL firmware from file</value>
+  </data>
+  <data name="Desc_OpenHclFirmwareFile" xml:space="preserve">
+    <value>Allow Hyper-V to load external IGVM development firmware files</value>
+  </data>
+  <data name="Error_Host_AzureFeatureSetRegistryUnavailable" xml:space="preserve">
+    <value>The Hyper-V virtualization registry key could not be opened.</value>
+  </data>
+  <data name="Error_Host_OpenHclRegistryUnavailable" xml:space="preserve">
+    <value>The Hyper-V virtualization registry key could not be opened.</value>
+  </data>
+  <data name="Error_Host_OpenHclRegistryChangeFailed" xml:space="preserve">
+    <value>Failed to change the OpenHCL firmware loading policy: {0}</value>
+  </data>
+  <data name="Error_VmCreate_OpenHclIgvmPermission" xml:space="preserve">
+    <value>Failed to grant Hyper-V read access to the selected IGVM file: {0}</value>
   </data>
   <data name="Menu_SwitchServer" xml:space="preserve">
     <value>Switch to Server Edition</value>
@@ -1617,12 +1650,6 @@ The existing NAT switch is: '{0}'</value>
   <data name="Label_ProcessorSettings" xml:space="preserve">
     <value>Processor Settings</value>
   </data>
-  <data name="Menu_HideHypervisor" xml:space="preserve">
-    <value>Hide Hypervisor ID</value>
-  </data>
-  <data name="Desc_HideHypervisor" xml:space="preserve">
-    <value>Hides virtualization flags, helps bypass detection.</value>
-  </data>
   <data name="Menu_ExposePmu" xml:space="preserve">
     <value>Expose Architectural Performance Monitoring Unit (Arch PMU)</value>
   </data>
@@ -1640,12 +1667,6 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Desc_DisableSpectre" xml:space="preserve">
     <value>Improves performance but reduces security.</value>
-  </data>
-  <data name="Menu_SocketTopo" xml:space="preserve">
-    <value>Enable Socket Topology</value>
-  </data>
-  <data name="Desc_SocketTopo" xml:space="preserve">
-    <value>Maps physical socket topology to guest.</value>
   </data>
   <data name="Label_Experimental" xml:space="preserve">
     <value>Experimental</value>
@@ -1858,7 +1879,7 @@ The existing NAT switch is: '{0}'</value>
     <value>Enable Dynamic Memory</value>
   </data>
   <data name="Desc_DynRam" xml:space="preserve">
-    <value>Allow Hyper-V to auto-scale memory.</value>
+    <value>Dynamically adjust between the minimum and maximum memory values</value>
   </data>
   <data name="Label_MinRam" xml:space="preserve">
     <value>Min RAM (MB)</value>
@@ -1876,10 +1897,10 @@ The existing NAT switch is: '{0}'</value>
     <value>Select physical page size for VM memory.</value>
   </data>
   <data name="Label_MemEncrypt" xml:space="preserve">
-    <value>Memory Encryption</value>
+    <value>Memory Encryption Policy</value>
   </data>
   <data name="Desc_MemEncrypt" xml:space="preserve">
-    <value>Enable hardware-based isolation &amp; encryption.</value>
+    <value>Set the encryption requirements for VM memory</value>
   </data>
   <data name="Button_OpenFolder" xml:space="preserve">
     <value>Open Folder</value>
@@ -2536,16 +2557,16 @@ The existing NAT switch is: '{0}'</value>
     <value>Hybrid Mapping Mode</value>
   </data>
   <data name="VmPage_MemGranularityAuto" xml:space="preserve">
-    <value>System Auto-Assign</value>
+    <value>Best</value>
   </data>
   <data name="VmPage_MemGranularityStandard" xml:space="preserve">
-    <value>Standard Granularity</value>
+    <value>4 KB</value>
   </data>
   <data name="VmPage_MemGranularityLarge" xml:space="preserve">
-    <value>Large Page Granularity</value>
+    <value>2 MB</value>
   </data>
   <data name="VmPage_MemGranularityHuge" xml:space="preserve">
-    <value>Huge Page Granularity</value>
+    <value>1 GB</value>
   </data>
   <data name="VmPage_MemTrackingDisable" xml:space="preserve">
     <value>Disable Tracking</value>
@@ -2554,7 +2575,16 @@ The existing NAT switch is: '{0}'</value>
     <value>Enable Tracking</value>
   </data>
   <data name="VmPage_MemTrackingPerNode" xml:space="preserve">
-    <value>Configure by Processor Node</value>
+    <value>Configure per NUMA Node</value>
+  </data>
+  <data name="VmPage_MemEncryptionDisabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="VmPage_MemEncryptionIfSupported" xml:space="preserve">
+    <value>Enable If Supported</value>
+  </data>
+  <data name="VmPage_MemEncryptionAlways" xml:space="preserve">
+    <value>Always Enable</value>
   </data>
   <data name="VmPage_SgxLaunchAccessDenied" xml:space="preserve">
     <value>Access Denied</value>
@@ -2647,19 +2677,22 @@ The existing NAT switch is: '{0}'</value>
     <value>Memory Mapping Mode</value>
   </data>
   <data name="VmRAMSettings_DescMemMappingMode" xml:space="preserve">
-    <value>Configure how VM memory maps to host physical resources</value>
+    <value>Set the memory backend type used by the virtual machine</value>
   </data>
   <data name="VmRAMSettings_LabelMemAccessMonitor" xml:space="preserve">
-    <value>Memory Access Monitoring Granularity</value>
+    <value>Tracking Mode</value>
+  </data>
+  <data name="VmRAMSettings_LabelMemAccessGranularity" xml:space="preserve">
+    <value>Access Tracking Granularity</value>
   </data>
   <data name="VmRAMSettings_DescMemAccessMonitor" xml:space="preserve">
-    <value>Configure read/write monitoring state and page resolution level</value>
+    <value>How virtual machine memory access is recorded</value>
   </data>
   <data name="VmRAMSettings_LabelSgxComputing" xml:space="preserve">
-    <value>Intel SGX Confidential Computing</value>
+    <value>Intel SGX Application Enclaves</value>
   </data>
   <data name="VmRAMSettings_DescSgxComputing" xml:space="preserve">
-    <value>Enable hardware-level isolated secure execution environment on the processor</value>
+    <value>Set whether SGX enclave memory is enabled for the virtual machine</value>
   </data>
   <data name="VmRAMSettings_BtnApply" xml:space="preserve">
     <value>Apply</value>
@@ -2668,19 +2701,19 @@ The existing NAT switch is: '{0}'</value>
     <value>Authorization Control Mode</value>
   </data>
   <data name="VmRAMSettings_DescSgxAuthMode" xml:space="preserve">
-    <value>Configure launch authorization and runtime verification mode for secure enclaves</value>
+    <value>Set the launch authorization and runtime verification mode for SGX enclaves</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMemSize" xml:space="preserve">
     <value>Confidential Memory Size (MB)</value>
   </data>
   <data name="VmRAMSettings_DescSgxMemSize" xml:space="preserve">
-    <value>Total physically isolated memory allocated for confidential computing</value>
+    <value>Set the total memory allocated to SGX enclaves</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMsrDefault" xml:space="preserve">
     <value>MSR Runtime Control Default</value>
   </data>
   <data name="VmRAMSettings_DescSgxMsrDefault" xml:space="preserve">
-    <value>Processor-specific register initial value</value>
+    <value>Set the initial value of the SGX processor-specific register</value>
   </data>
   <data name="VmRAMSettings_PlaceholderSgxMsr" xml:space="preserve">
     <value>64-bit hexadecimal string</value>
@@ -2689,10 +2722,16 @@ The existing NAT switch is: '{0}'</value>
     <value>Memory Optimization</value>
   </data>
   <data name="VmRAMSettings_ToggleColdHint" xml:space="preserve">
-    <value>Cold Memory Page Hint</value>
+    <value>Guest Cold-page Hint</value>
+  </data>
+  <data name="VmRAMSettings_DescColdHint" xml:space="preserve">
+    <value>Allow the VM operating system to submit low-activity memory page hints to the host</value>
   </data>
   <data name="VmRAMSettings_ToggleHotHint" xml:space="preserve">
-    <value>Hot Memory Page Hint</value>
+    <value>Guest Hot-page Hint</value>
+  </data>
+  <data name="VmRAMSettings_DescHotHint" xml:space="preserve">
+    <value>Allow the VM operating system to submit active memory page hints to the host</value>
   </data>
   <data name="VmRAMSettings_NeedVirtualBacking" xml:space="preserve">
     <value>This feature requires virtual memory backing (set Memory Mapping Mode to Virtual above)</value>
@@ -2701,37 +2740,46 @@ The existing NAT switch is: '{0}'</value>
     <value>Huge Pages</value>
   </data>
   <data name="VmRAMSettings_DescHugePages" xml:space="preserve">
-    <value>Back VM memory with 1GB huge pages to improve performance for large-memory VMs</value>
+    <value>Use 1GB huge pages as the backing pages for VM memory</value>
   </data>
   <data name="VmRAMSettings_ToggleEpf" xml:space="preserve">
-    <value>Para-virtualized Paging Optimization</value>
+    <value>Enlightened Page Fault Handling (EPF)</value>
+  </data>
+  <data name="VmRAMSettings_DescEpf" xml:space="preserve">
+    <value>Allow the VM operating system to use the enlightened page-fault interface</value>
   </data>
   <data name="VmRAMSettings_ToggleCompressStore" xml:space="preserve">
-    <value>Independent Compressed Memory Pool</value>
+    <value>Private Memory Compression Store</value>
+  </data>
+  <data name="VmRAMSettings_DescCompressStore" xml:space="preserve">
+    <value>Enable a separate memory compression store for this virtual machine</value>
   </data>
   <data name="VmRAMSettings_LabelNumaBlockLimit" xml:space="preserve">
     <value>Max Memory Per Node (MB)</value>
   </data>
   <data name="VmRAMSettings_DescNumaBlockLimit" xml:space="preserve">
-    <value>Limit the maximum memory of a single virtual NUMA node</value>
+    <value>Maximum memory for a single virtual NUMA node</value>
   </data>
   <data name="VmRAMSettings_LabelDynMemStep" xml:space="preserve">
-    <value>Dynamic Memory Adjustment Step</value>
+    <value>Dynamic Memory Page Alignment</value>
   </data>
   <data name="VmRAMSettings_DescDynMemStep" xml:space="preserve">
-    <value>Minimum step unit when adjusting dynamically allocated memory</value>
+    <value>Page alignment used when adding or removing dynamic memory</value>
   </data>
   <data name="VmRAMSettings_LabelCxlExtension" xml:space="preserve">
-    <value>Hardware Acceleration Extension (CXL)</value>
+    <value>CXL Memory</value>
   </data>
   <data name="VmRAMSettings_DescCxlExtension" xml:space="preserve">
-    <value>Enable high-speed bus interconnect protocol support or force physical address locking</value>
+    <value>Set whether CXL memory support is enabled for the virtual machine</value>
   </data>
   <data name="VmRAMSettings_ToggleCxlSupport" xml:space="preserve">
     <value>CXL Support</value>
   </data>
   <data name="VmRAMSettings_TogglePhysicalPinning" xml:space="preserve">
-    <value>Physical Pinning</value>
+    <value>Allow Guest GPA Page Pinning</value>
+  </data>
+  <data name="VmRAMSettings_DescGpaPinning" xml:space="preserve">
+    <value>Allow the VM operating system to request pinning or unpinning of GPA ranges at runtime</value>
   </data>
   <data name="VmSpacetimeSettings_TitleMgmt" xml:space="preserve">
     <value>Spacetime Management</value>
@@ -2831,6 +2879,9 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="Error_VmCreate_RollbackFailed" xml:space="preserve">
     <value>Creation failed and the half-created VM '{0}' could not be removed automatically — please delete it manually. (Rollback error: {1})</value>
+  </data>
+  <data name="Error_VmCreate_ArtifactCleanupFailed" xml:space="preserve">
+    <value>Creation rollback could not remove these files or directories; please clean them up manually: {0}</value>
   </data>
   <data name="VmAdvanced_Title" xml:space="preserve">
     <value>Advanced</value>
@@ -3036,6 +3087,12 @@ The existing NAT switch is: '{0}'</value>
   <data name="Cpu_PerfmonPmuDesc" xml:space="preserve">
     <value>Allows the VM to access general hardware performance counters</value>
   </data>
+  <data name="Cpu_PerfmonPmuRequired" xml:space="preserve">
+    <value>Enable “Expose Performance Monitoring Unit (PMU)” first.</value>
+  </data>
+  <data name="Cpu_PerfmonPmuInUse" xml:space="preserve">
+    <value>Turn off PEBS and Intel PT before disabling PMU.</value>
+  </data>
   <data name="Cpu_PerfmonLbr" xml:space="preserve">
     <value>Expose Last Branch Records (LBR)</value>
   </data>
@@ -3046,13 +3103,13 @@ The existing NAT switch is: '{0}'</value>
     <value>Expose Precise Event-Based Sampling (PEBS)</value>
   </data>
   <data name="Cpu_PerfmonPebsDesc" xml:space="preserve">
-    <value>Allows the VM to collect precise performance event samples</value>
+    <value>Allows the VM to collect precise performance event samples; requires PMU</value>
   </data>
   <data name="Cpu_PerfmonIpt" xml:space="preserve">
     <value>Expose Processor Trace (Intel PT)</value>
   </data>
   <data name="Cpu_PerfmonIptDesc" xml:space="preserve">
-    <value>Allows the VM to record the processor instruction execution flow</value>
+    <value>Allows the VM to record the processor instruction execution flow; requires PMU</value>
   </data>
   <data name="Cpu_FreqCap" xml:space="preserve">
     <value>Max Frequency (MHz)</value>
@@ -3097,13 +3154,13 @@ The existing NAT switch is: '{0}'</value>
     <value>Sets the maximum number of nested hardware-isolated VMs that can be created</value>
   </data>
   <data name="Cpu_MaxClusterPerSocket" xml:space="preserve">
-    <value>Clusters (CCX) per Socket</value>
+    <value>Maximum Processor Clusters per Socket</value>
   </data>
   <data name="Cpu_MaxClusterPerSocketDesc" xml:space="preserve">
-    <value>Sets the maximum number of core complexes in each virtual socket</value>
+    <value>Sets the maximum number of processor clusters allowed in each virtual CPU socket</value>
   </data>
   <data name="Cpu_MaxProcPerL3" xml:space="preserve">
-    <value>Processors per L3 (CCX)</value>
+    <value>Processors per L3</value>
   </data>
   <data name="Cpu_MaxProcPerL3Desc" xml:space="preserve">
     <value>Sets the maximum number of virtual processors in each virtual L3 cache</value>
@@ -3136,10 +3193,10 @@ The existing NAT switch is: '{0}'</value>
     <value>Default</value>
   </data>
   <data name="CpuEnum_Shatter_AlwaysEnabled" xml:space="preserve">
-    <value>Always Shatter (4K)</value>
+    <value>Always Enabled</value>
   </data>
   <data name="CpuEnum_Shatter_AlwaysDisabled" xml:space="preserve">
-    <value>Never Shatter (large pages)</value>
+    <value>Always Disabled</value>
   </data>
   <data name="Gpu_StalePathTitle" xml:space="preserve">
     <value>GPU path changed</value>
@@ -3153,10 +3210,10 @@ Update the reference and retry?</value>
     <value>Update and retry</value>
   </data>
   <data name="Gpu_StaleTitle" xml:space="preserve">
-    <value>GPU partition not found</value>
+    <value>Invalid GPU partition detected</value>
   </data>
   <data name="Gpu_StaleMessage" xml:space="preserve">
-    <value>The GPU assigned to VM "{0}" no longer exists on this host, so it cannot start.
+    <value>VM "{0}" contains an incomplete GPU partition, or its assigned GPU no longer exists on this host, so it cannot start.
 
 Clear it and retry?</value>
   </data>
@@ -3251,6 +3308,9 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   </data>
   <data name="Vmcx_IncompleteDda" xml:space="preserve">
     <value>Incomplete DDA device: vdev{0:D3} (instance={1}) is missing HostResources/HostResource/Instance → the VM will fail to start.</value>
+  </data>
+  <data name="Vmcx_IncompleteGpuPv" xml:space="preserve">
+    <value>Incomplete GPU partition: vdev{0:D3} (instance={1}) is missing InstanceGuid or VDEVVersion → the VM will fail to start.</value>
   </data>
   <data name="Vmcx_OpFailHr" xml:space="preserve">
     <value>{0} failed hr=0x{1}</value>
@@ -3411,15 +3471,6 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   <data name="VmPcie_AppliedMessage" xml:space="preserve">
     <value>PCIe settings applied</value>
   </data>
-  <data name="VmPcie_AzureFeatureSetOpenFailed" xml:space="preserve">
-    <value>Failed to open the host registry configuration required for PCIe emulation.</value>
-  </data>
-  <data name="VmPcie_AzureFeatureSetEnableFailed" xml:space="preserve">
-    <value>Failed to enable the host policy required for PCIe emulation: {0}</value>
-  </data>
-  <data name="VmPcie_AzureFeatureSetRestoreFailed" xml:space="preserve">
-    <value>Failed to restore the host policy used temporarily for PCIe emulation: {0}</value>
-  </data>
   <data name="VmPcie_SettingsNotFound" xml:space="preserve">
     <value>Virtual machine settings were not found.</value>
   </data>
@@ -3453,6 +3504,12 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   <data name="VmAdvanced_FullScsiDesc" xml:space="preserve">
     <value>Allow the virtual machine to send unfiltered SCSI commands to attached physical disks</value>
   </data>
+  <data name="VmAdvanced_BatteryTitle" xml:space="preserve">
+    <value>Battery status passthrough</value>
+  </data>
+  <data name="VmAdvanced_BatteryDesc" xml:space="preserve">
+    <value>Allows the virtual machine to read the host battery status and remaining charge</value>
+  </data>
   <data name="VmAdvanced_LockOnDisconnectTitle" xml:space="preserve">
     <value>Lock on disconnect</value>
   </data>
@@ -3470,5 +3527,83 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   </data>
   <data name="VmAdvanced_HibernationDesc" xml:space="preserve">
     <value>Allow the virtual machine to use S4 hibernation and fast startup</value>
+  </data>
+  <data name="Label_CpuInstructionSetCapabilities" xml:space="preserve">
+    <value>Instruction Set Capabilities</value>
+  </data>
+  <data name="Label_CpuInterruptControl" xml:space="preserve">
+    <value>Interrupt Control</value>
+  </data>
+  <data name="Label_CpuProcessorTopology" xml:space="preserve">
+    <value>Processor Topology</value>
+  </data>
+  <data name="Label_CpuPerformanceMonitoring" xml:space="preserve">
+    <value>Performance Monitoring</value>
+  </data>
+  <data name="Label_CpuFrequencyControl" xml:space="preserve">
+    <value>Frequency Control</value>
+  </data>
+  <data name="Label_CpuMemoryAddressing" xml:space="preserve">
+    <value>Addressing and Paging</value>
+  </data>
+  <data name="Label_CpuSecurityIsolation" xml:space="preserve">
+    <value>Security Isolation</value>
+  </data>
+  <data name="Label_MemoryMapping" xml:space="preserve">
+    <value>Memory Mapping</value>
+  </data>
+  <data name="Label_MemoryPageManagement" xml:space="preserve">
+    <value>Memory Topology</value>
+  </data>
+  <data name="Label_MemoryHardwareExtensions" xml:space="preserve">
+    <value>Hardware Extensions</value>
+  </data>
+  <data name="Label_MemoryConfidentialComputing" xml:space="preserve">
+    <value>Confidential Computing</value>
+  </data>
+  <data name="Xaml_OpenHclImage" xml:space="preserve">
+    <value>OpenHCL IGVM Image</value>
+  </data>
+  <data name="Xaml_Placeholder_OpenHclIgvm" xml:space="preserve">
+    <value>Select an OpenHCL IGVM firmware image</value>
+  </data>
+  <data name="VmPage_SelectOpenHclIgvm" xml:space="preserve">
+    <value>Select OpenHCL IGVM Image</value>
+  </data>
+  <data name="VmPage_OpenHclIgvmFilter" xml:space="preserve">
+    <value>IGVM Firmware Image (*.bin;*.igvm)|*.bin;*.igvm|All Files (*.*)|*.*</value>
+  </data>
+  <data name="VmPage_OpenHclIgvmRequired" xml:space="preserve">
+    <value>OpenHCL requires a valid IGVM image file.</value>
+  </data>
+  <data name="VmPage_OpenHclRequiresV12" xml:space="preserve">
+    <value>OpenHCL requires virtual machine configuration version 12.0 or later.</value>
+  </data>
+  <data name="VmPage_DynMemAlignmentDisabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="Label_MemoryAccessTracking" xml:space="preserve">
+    <value>Memory Access Tracking</value>
+  </data>
+  <data name="VmRAMSettings_DescMemAccessGranularity" xml:space="preserve">
+    <value>Set the region size used for memory access records</value>
+  </data>
+  <data name="VmRAMSettings_MemTrackingDisabledHint" xml:space="preserve">
+    <value>Enable memory access tracking first</value>
+  </data>
+  <data name="VmRAMSettings_MemTrackingPerNodeHint" xml:space="preserve">
+    <value>Each NUMA node currently uses its own tracking granularity</value>
+  </data>
+  <data name="Error_VmPower_WorkerNotFound" xml:space="preserve">
+    <value>The virtual machine did not power off and its worker process could not be identified.</value>
+  </data>
+  <data name="Error_VmPower_InvalidWorkerProcess" xml:space="preserve">
+    <value>Refusing to terminate PID {0}: it is not a Hyper-V worker process.</value>
+  </data>
+  <data name="Error_VmPower_TerminateWorkerFailed" xml:space="preserve">
+    <value>Failed to terminate the Hyper-V worker process for '{0}': {1}</value>
+  </data>
+  <data name="Error_VmPower_StillNotOff" xml:space="preserve">
+    <value>The worker process for '{0}' was terminated, but the virtual machine still did not reach the off state.</value>
   </data>
 </root>

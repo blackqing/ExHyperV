@@ -5,9 +5,18 @@ using System.Xml.Linq;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Extensions;
 using System.Net.Http;
+using System.Management;
+using System.Runtime.InteropServices;
 
 namespace ExHyperV.Services
 {
+    public enum HostPlatform
+    {
+        Unknown,
+        Amd,
+        Intel,
+        Arm64
+    }
 
     internal class GitHubRelease
     {
@@ -17,6 +26,7 @@ namespace ExHyperV.Services
     {
 
         private static readonly HttpClient _httpClient = new HttpClient();
+        public static HostPlatform NativeHostPlatform { get; } = DetectNativeHostPlatform();
         public record UpdateResult(bool IsUpdateAvailable, string LatestVersion, bool IsInnerTest = false);
         private const string GitHubApiUrl = "https://api.github.com/repos/Justsenger/ExHyperV/releases/latest";
         private const string FallbackUrl = "https://update.shalingye.workers.dev/";
@@ -96,6 +106,27 @@ namespace ExHyperV.Services
             {
                 return "en-US"; // 文件损坏则返回默认值
             }
+        }
+
+        private static HostPlatform DetectNativeHostPlatform()
+        {
+            if (RuntimeInformation.OSArchitecture == Architecture.Arm64)
+                return HostPlatform.Arm64;
+
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT Manufacturer FROM Win32_Processor");
+                string? manufacturer = searcher.Get().Cast<ManagementBaseObject>()
+                    .FirstOrDefault()?["Manufacturer"]?.ToString();
+
+                if (string.Equals(manufacturer, "AuthenticAMD", StringComparison.OrdinalIgnoreCase))
+                    return HostPlatform.Amd;
+                if (string.Equals(manufacturer, "GenuineIntel", StringComparison.OrdinalIgnoreCase))
+                    return HostPlatform.Intel;
+            }
+            catch { }
+
+            return HostPlatform.Unknown;
         }
 
         // 保存语言设置并重启应用
@@ -306,6 +337,11 @@ namespace ExHyperV.Services
             try
             {
                 XDocument configDoc = XDocument.Load(ConfigFilePath);
+                // 旧版本会在关闭控制台时把登录界面的 1366x768 当成用户偏好保存。
+                // 只有带显式标记的新值才可信；未标记的历史值交给新的 1920x1080 默认值迁移。
+                if (!bool.TryParse(configDoc.Root?.Element("DefaultConsoleResolutionExplicit")?.Value, out bool explicitValue)
+                    || !explicitValue)
+                    return null;
                 var v = configDoc.Root?.Element("DefaultConsoleResolution")?.Value;
                 if (string.IsNullOrEmpty(v)) return null;
                 var parts = v.Split('x');
@@ -329,10 +365,15 @@ namespace ExHyperV.Services
                     var el = configDoc.Root?.Element("DefaultConsoleResolution");
                     if (el != null) el.Value = val;
                     else configDoc.Root?.Add(new XElement("DefaultConsoleResolution", val));
+                    var explicitEl = configDoc.Root?.Element("DefaultConsoleResolutionExplicit");
+                    if (explicitEl != null) explicitEl.Value = bool.TrueString;
+                    else configDoc.Root?.Add(new XElement("DefaultConsoleResolutionExplicit", bool.TrueString));
                 }
                 else
                 {
-                    configDoc = new XDocument(new XElement("Config", new XElement("DefaultConsoleResolution", val)));
+                    configDoc = new XDocument(new XElement("Config",
+                        new XElement("DefaultConsoleResolution", val),
+                        new XElement("DefaultConsoleResolutionExplicit", bool.TrueString)));
                 }
                 configDoc.Save(ConfigFilePath);
             }

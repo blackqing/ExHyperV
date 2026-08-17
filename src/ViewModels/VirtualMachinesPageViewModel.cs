@@ -163,6 +163,14 @@ namespace ExHyperV.ViewModels
 
                 if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
                 {
+                    // 资源管理器会复用普通权限的桌面进程，因此打开默认 Hyper-V 配置目录前需补充当前用户的只读权限。
+                    var access = VmFolderAccessService.EnsureExplorerCanRead(path);
+                    if (!access.Success)
+                    {
+                        ShowError($"{Properties.Resources.VmPage_OpenFail}：{access.Error}");
+                        return;
+                    }
+
                     Shell.Reveal(path);
                 }
                 else
@@ -302,20 +310,47 @@ namespace ExHyperV.ViewModels
 
             // 二次确认弹窗：预先算出"将删除的目录与文件"清单直接展示——替代口头提醒用户自己去查目录里有没有其他文件。
             var preview = await VmDeleteService.PreviewPurgeAsync(vm.Id);
-            var list = new System.Text.StringBuilder();
+            var listText = new System.Windows.Controls.TextBlock
+            {
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                FontSize = 12,
+            };
+
+            static bool IsHighlightedImage(string path)
+            {
+                string extension = System.IO.Path.GetExtension(path);
+                return extension.Equals(".iso", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".vhd", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".vhdx", StringComparison.OrdinalIgnoreCase);
+            }
+
+            void AppendPreviewLine(string text, string? filePath = null)
+            {
+                var run = new System.Windows.Documents.Run(text);
+                if (!string.IsNullOrEmpty(filePath) && IsHighlightedImage(filePath))
+                    run.Foreground = new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(232, 71, 86));
+                listText.Inlines.Add(run);
+                listText.Inlines.Add(new System.Windows.Documents.LineBreak());
+            }
             if (!string.IsNullOrEmpty(preview.ConfigDir))
             {
-                list.AppendLine("· " + preview.ConfigDir);
+                AppendPreviewLine("· " + preview.ConfigDir);
                 int shown = 0;
                 foreach (var f in preview.ConfigDirFiles)
                 {
-                    if (shown++ >= 40) { list.AppendLine($"     · … (+{preview.ConfigDirFiles.Count - 40})"); break; }
-                    list.AppendLine("     · " + System.IO.Path.GetFileName(f));
+                    if (shown++ >= 40)
+                    {
+                        AppendPreviewLine($"     · … (+{preview.ConfigDirFiles.Count - 40})");
+                        break;
+                    }
+                    AppendPreviewLine("     · " + System.IO.Path.GetFileName(f), f);
                 }
             }
             foreach (var d in preview.ExternalDiskFiles)
-                list.AppendLine("· " + d);
-            if (list.Length == 0) list.Append(vm.Name);
+                AppendPreviewLine("· " + d, d);
+            if (listText.Inlines.Count == 0)
+                AppendPreviewLine(vm.Name);
 
             // 正文用原生控件：上方告警文字（自动换行）+ 下方等宽、可滚动的清单（路径长/文件多都不撑爆弹窗）。
             var body = new System.Windows.Controls.StackPanel();
@@ -330,12 +365,7 @@ namespace ExHyperV.ViewModels
                 MaxHeight = 220,
                 VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
-                Content = new System.Windows.Controls.TextBlock
-                {
-                    Text = list.ToString().TrimEnd(),
-                    FontFamily = new System.Windows.Media.FontFamily("Consolas"),
-                    FontSize = 12,
-                },
+                Content = listText,
             });
 
             var dialog = new Wpf.Ui.Controls.MessageBox
@@ -467,9 +497,17 @@ namespace ExHyperV.ViewModels
             // 判据(本地化无关):失败错误文本含设备名 "GPU Partition"(本地化消息里仍为英文),
             // 或含某个失效分区的实例 GUID。两者皆无 → 本次失败另有其因(如 0x8007000E 内存不足)→ 交回通用报错。
             string err = startError ?? string.Empty;
+            var explicitlyImplicated = stale
+                .Where(s => err.IndexOf(s.Instance, StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
             bool gpuImplicated = err.IndexOf("GPU Partition", StringComparison.OrdinalIgnoreCase) >= 0
-                || stale.Any(s => err.IndexOf(s.Instance, StringComparison.OrdinalIgnoreCase) >= 0);
+                || explicitlyImplicated.Count > 0;
             if (!gpuImplicated) return false;
+
+            // Worker 错误通常带有实际失败的 GPU-PV 实例 GUID。此时只修复
+            // 精确命中的实例，避免顺带删除与本次启动失败无关的其它旧分区。
+            if (explicitlyImplicated.Count > 0)
+                stale = explicitlyImplicated;
 
             // 区分两种失配:同一张卡仍在主机但路径变了(可重指,保住 GPU)vs 卡已不在(只能清除)
             bool allRebind = stale.All(s => !string.IsNullOrEmpty(s.RebindPath));

@@ -440,14 +440,17 @@ Host and VM must be the following versions to enable this capability.
 | **Nvidia** | RTX 4080 Super | Ada Lovelace | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | RTX 2080 Super | Turing | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | GTX 1050 | Pascal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| **Nvidia** | Tesla P100-PCIE-16GB | Pascal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **Nvidia** | GT 210 | Tesla | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Not supported |
 | **Nvidia** | Tesla V100-SXM2-16GB | Volta | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Host crashes on boot #95 |
 | **Intel**| Iris Xe Graphics| Xe-LP | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID|
+| **Intel**| A310 | Xe-HPG | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID|
 | **Intel**| A380 | Xe-HPG | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID|
 | **Intel**| UHD Graphics 730 | Xe-LP | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID|
 | **Intel**| UHD Graphics 620 Mobile | Generation 9.5 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID|
 | **Intel**| HD Graphics 530 | Generation 9.0 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Not supported |
 | **AMD** | Radeon Vega 3 | GCN 5.0 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | Incomplete HW ID|
+| **AMD** | RX 5500 XT | RDNA 1.0 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | **AMD** | Radeon 8060S | RDNA 3.5 | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | Incomplete HW ID |
 | **AMD** | Radeon 890M | RDNA 3.5 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Boot crashes host |
 | **Moore Threads** | MTT S80 | MUSA | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Not supported |
@@ -516,7 +519,7 @@ Create a GPU-PV partition for the selected graphics card and assign it to the vi
 
 This is optional. When adding multiple graphics cards, you can uncheck this to avoid importing drivers every time.
 
-- For Windows VMs, the host driver folder will be fully injected into the VM's specified partition. If it's an Nvidia card, registry fixes will also be added. At the same time, link files for certain driver files will be created in the VM's System32 directory. For specific mapping relationships, refer to [drivermapping.md](https://github.com/Justsenger/ExHyperV/blob/main/doc/drivermapping.md).
+- For Windows VMs, the host driver folder will be fully injected into the VM's specified partition. For NVIDIA, ExHyperV also creates the minimal `nvlddmkm` service-loading values needed to address the selected `nvlddmkm.sys` under `HostDriverStore`; it does not import the host's complete NVIDIA service tree. At the same time, link files for certain driver files will be created in the VM's System32 directory. For specific mapping relationships, refer to [drivermapping.md](https://github.com/Justsenger/ExHyperV/blob/main/doc/drivermapping.md).
 
 - For Linux VMs, an SSH automated flow will be executed for module compilation and driver installation. Systems or kernels outside the compatibility list need more testing.
 
@@ -717,6 +720,7 @@ Ineffective Versions: Pro, Home, Enterprise, Home Single Language.
 | **Nvidia** | RTX 5090 | Blackwell 2.0 | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4090 | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4080 Super | Ada Lovelace | ✅ | ✅ | ✅ |
+| **Nvidia** | RTX 4070 Super | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 4070 | Ada Lovelace | ✅ | ✅ | ✅ |
 | **Nvidia** | RTX 2080 Super | Turing | ✅ | ✅ | ✅ |
 | **Nvidia** | GTX 1660 Super | Turing | ✅ | ✅ | ✅ |
@@ -724,12 +728,16 @@ Ineffective Versions: Pro, Home, Enterprise, Home Single Language.
 | **Nvidia** | GT 1030 | Pascal | ✅ | ✅ | ✅ |
 | **Nvidia** | GT 210 | Tesla | ✅ | ✅ | ❌ |
 | **Nvidia** | Tesla V100-SXM2-16GB | Volta | ✅ | ✅ | ❌ |
+| **Nvidia** | Tesla P100-PCIE-16GB | Pascal | ✅ | ✅ | ❌ |
 | **Intel** | DG1 | Xe-LP | ✅ | ❌ | [Specific Driver](https://www.shengqipc.cn/d21.html) ✅ |
+| **Intel** | A310 | Xe-HPG | Code 43 ❌ | ✅ | ❌ |
 | **Intel** | A380 | Xe-HPG | Code 43 ❌ | ✅ | ❌ |
+| **Intel** | UHD Graphics 770 | Xe | Cannot be passed through ❌ | ❌ | ❌ |
 | **Intel**| UHD Graphics 620 Mobile | Generation 9.5 | Fails ❌ | ❌ | ❌ |
 | **Intel**| HD Graphics 610 | Generation 9.5 | Fails ❌ | ❌ | ❌ |
 | **Intel**| HD Graphics 530 | Generation 9.0 | Fails ❌ | ❌ | ❌ |
 | **AMD** | RX 580 | GCN 4.0 | Code 43 ❌ | ✅ | ❌ |
+| **AMD** | RX 5500 XT | RDNA 1.0 | Code 43 ❌ | ✅ | ❌ |
 | **AMD** | Radeon Vega 3 | GCN 5.0 | Code 43 ❌ | ❌ | ❌ |
 | **Qualcomm** | Qualcomm(R) Adreno(TM) X1-85 GPU | Adreno X1 | Not supported ❌ | ❌ | ❌ |
 | **Qualcomm** | Qualcomm(R) Adreno(TM) 8cx Gen 3  | Adreno | Not supported ❌ | ❌ | ❌ |

@@ -9,6 +9,47 @@ namespace ExHyperV.Tools;
 
 public static class Win32Api
 {
+    /// <summary>
+    /// 将系统 INF 目录中的已发布名称（例如 oem35.inf）精确解析为 DriverStore 中的原始 INF 路径。
+    /// 该映射由 SetupAPI 维护，不能从目录名或驱动版本字符串推断。
+    /// </summary>
+    public static string GetInfDriverStoreLocation(string publishedInfName)
+    {
+        if (string.IsNullOrWhiteSpace(publishedInfName))
+            throw new ArgumentException("Published INF name is required.", nameof(publishedInfName));
+
+        uint requiredSize = 0;
+        bool firstCall = NativeMethods.SetupGetInfDriverStoreLocation(
+            publishedInfName,
+            nint.Zero,
+            nint.Zero,
+            null,
+            0,
+            out requiredSize);
+        int firstError = Marshal.GetLastWin32Error();
+        const int ErrorInsufficientBuffer = 122;
+        if (firstCall || firstError != ErrorInsufficientBuffer || requiredSize == 0)
+            throw new System.ComponentModel.Win32Exception(
+                firstError,
+                $"Unable to resolve the DriverStore location for {publishedInfName}.");
+
+        var buffer = new StringBuilder(checked((int)requiredSize));
+        if (!NativeMethods.SetupGetInfDriverStoreLocation(
+                publishedInfName,
+                nint.Zero,
+                nint.Zero,
+                buffer,
+                (uint)buffer.Capacity,
+                out requiredSize))
+        {
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                $"Unable to resolve the DriverStore location for {publishedInfName}.");
+        }
+
+        return buffer.ToString();
+    }
+
     // ── PnP 设备控制 ──────────────────────────────────────────────
 
     public static ApiResponse EnablePnpDevice(string instanceId)
@@ -68,14 +109,14 @@ public static class Win32Api
     {
         var sw = Stopwatch.StartNew();
 
-        // 1. Win32_PnPEntity：拿在线设备的 Name/PNPClass/Service
-        var pnpEntityMap = new Dictionary<string, (string Name, string PnpClass, string Service)>(
+        // 1. Win32_PnPEntity：拿在线设备的 Name/PNPClass/Service/Manufacturer
+        var pnpEntityMap = new Dictionary<string, (string Name, string PnpClass, string Service, string Manufacturer)>(
             StringComparer.OrdinalIgnoreCase);
         try
         {
             using var searcher = new System.Management.ManagementObjectSearcher(
                 @"root\cimv2",
-                "SELECT DeviceID, Name, PNPClass, Service FROM Win32_PnPEntity");
+                "SELECT DeviceID, Name, PNPClass, Service, Manufacturer FROM Win32_PnPEntity");
             using var collection = searcher.Get();
             foreach (System.Management.ManagementObject obj in collection)
             {
@@ -86,7 +127,8 @@ public static class Win32Api
                     pnpEntityMap[devId] = (
                         obj["Name"]?.ToString() ?? "",
                         obj["PNPClass"]?.ToString() ?? "",
-                        obj["Service"]?.ToString() ?? "");
+                        obj["Service"]?.ToString() ?? "",
+                        obj["Manufacturer"]?.ToString() ?? "");
                 }
             }
         }
@@ -132,14 +174,17 @@ public static class Win32Api
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 9);  // DEVPKEY_Device_Class
             string service = GetDevNodeStringProperty(devInst, instanceId,
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 6);  // DEVPKEY_Device_Service
+            string manufacturer = GetDevNodeStringProperty(devInst, instanceId,
+                new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 13); // DEVPKEY_Device_Manufacturer
             string parentInstanceId = GetDevNodeStringProperty(devInst, instanceId,
                 new Guid("4340A6C5-93FA-4706-972C-7B648008A5A7"), 8);  // DEVPKEY_Device_Parent
             // cfgmgr32 拿不到时 fallback Win32_PnPEntity
-            if (string.IsNullOrEmpty(friendlyName) && pnpEntityMap.TryGetValue(instanceId, out var entityInfo))
+            if (pnpEntityMap.TryGetValue(instanceId, out var entityInfo))
             {
-                friendlyName = entityInfo.Name;
+                friendlyName = string.IsNullOrEmpty(friendlyName) ? entityInfo.Name : friendlyName;
                 pnpClass = string.IsNullOrEmpty(pnpClass) ? entityInfo.PnpClass : pnpClass;
                 service = string.IsNullOrEmpty(service) ? entityInfo.Service : service;
+                manufacturer = string.IsNullOrEmpty(manufacturer) ? entityInfo.Manufacturer : manufacturer;
             }
 
             // LocationPaths
@@ -152,6 +197,7 @@ public static class Win32Api
                 FriendlyName = friendlyName,
                 Class = pnpClass,
                 Service = service,
+                Manufacturer = manufacturer,
                 ParentInstanceId = parentInstanceId,
                 Status = status,
                 LocationPaths = locationPaths
@@ -358,6 +404,7 @@ public class PciDeviceInfo
     public string FriendlyName { get; set; } = "";
     public string Class { get; set; } = "";
     public string Service { get; set; } = "";
+    public string Manufacturer { get; set; } = "";
     public string ParentInstanceId { get; set; } = "";
     public string Status { get; set; } = "";
     public List<string> LocationPaths { get; set; } = new();
@@ -391,6 +438,16 @@ internal static class NativeMethods
     public static extern bool SetupDiCallClassInstaller(int installFunction, nint deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData);
     [DllImport("setupapi.dll", SetLastError = true)]
     public static extern bool SetupDiDestroyDeviceInfoList(nint deviceInfoSet);
+    [DllImport("setupapi.dll", EntryPoint = "SetupGetInfDriverStoreLocationW", CharSet = CharSet.Unicode,
+        SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetupGetInfDriverStoreLocation(
+        [MarshalAs(UnmanagedType.LPWStr)] string fileName,
+        nint alternatePlatformInfo,
+        nint localeName,
+        StringBuilder? returnBuffer,
+        uint returnBufferSize,
+        out uint requiredSize);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct SP_DEVINFO_DATA { public uint cbSize; public Guid ClassGuid; public uint DevInst; public nint Reserved; }

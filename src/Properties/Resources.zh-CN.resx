@@ -591,8 +591,20 @@
   <data name="MigrationCompatibilityDescription" xml:space="preserve">
     <value>屏蔽 CPU 指令集，以便在不同版本的宿主间迁移</value>
   </data>
+  <data name="Cpu_MigrationCompatibilityMode" xml:space="preserve">
+    <value>迁移兼容模式</value>
+  </data>
+  <data name="Cpu_MigrationCompatibilityModeDesc" xml:space="preserve">
+    <value>选择固定的最小特征集，或群集节点共同支持的特征集</value>
+  </data>
+  <data name="CpuEnum_Migration_MinimumFeatureSet" xml:space="preserve">
+    <value>最小特征集</value>
+  </data>
+  <data name="CpuEnum_Migration_CommonClusterFeatureSet" xml:space="preserve">
+    <value>群集公共特征集</value>
+  </data>
   <data name="LegacySystemCompatibility" xml:space="preserve">
-    <value>老旧系统兼容性</value>
+    <value>旧系统兼容性</value>
   </data>
   <data name="LegacySystemCompatibilityDescription" xml:space="preserve">
     <value>屏蔽 CPU 指令集，提高对老旧操作系统的兼容性</value>
@@ -604,13 +616,13 @@
     <value>控制向虚拟机公开的每个核心硬件线程数</value>
   </data>
   <data name="CpuEnum_Smt_Inherit" xml:space="preserve">
-    <value>继承主机</value>
+    <value>自动</value>
   </data>
   <data name="CpuEnum_Smt_SingleThread" xml:space="preserve">
-    <value>单线程</value>
+    <value>关闭</value>
   </data>
   <data name="CpuEnum_Smt_MultiThread" xml:space="preserve">
-    <value>多线程</value>
+    <value>开启</value>
   </data>
   <data name="CpuBinding" xml:space="preserve">
     <value>CPU 绑定</value>
@@ -1197,6 +1209,9 @@
   <data name="Msg_Net_Added" xml:space="preserve">
     <value>已添加新的网络适配器</value>
   </data>
+  <data name="Msg_Net_CreateSwitchFirst" xml:space="preserve">
+    <value>请先创建虚拟交换机</value>
+  </data>
   <data name="Error_Net_AddExc" xml:space="preserve">
     <value>添加异常</value>
   </data>
@@ -1399,13 +1414,13 @@
     <value>配置日志已拷贝到剪贴板</value>
   </data>
   <data name="Mem_Standard" xml:space="preserve">
-    <value>标准 (4KB)</value>
+    <value>4 KB</value>
   </data>
   <data name="Mem_Large" xml:space="preserve">
-    <value>大页 (2MB)</value>
+    <value>2 MB</value>
   </data>
   <data name="Mem_Huge" xml:space="preserve">
-    <value>巨页 (1GB)</value>
+    <value>1 GB</value>
   </data>
   <data name="Common_None" xml:space="preserve">
     <value>无</value>
@@ -1481,6 +1496,24 @@
   </data>
   <data name="Desc_NativeNvme" xml:space="preserve">
     <value>使用 NVMe 原生多队列驱动，而不是 SCSI</value>
+  </data>
+  <data name="Menu_OpenHclFirmwareFile" xml:space="preserve">
+    <value>从文件加载 OpenHCL 固件</value>
+  </data>
+  <data name="Desc_OpenHclFirmwareFile" xml:space="preserve">
+    <value>允许 Hyper-V 加载外部 IGVM 开发固件文件</value>
+  </data>
+  <data name="Error_Host_AzureFeatureSetRegistryUnavailable" xml:space="preserve">
+    <value>无法打开 Hyper-V 虚拟化注册表项。</value>
+  </data>
+  <data name="Error_Host_OpenHclRegistryUnavailable" xml:space="preserve">
+    <value>无法打开 Hyper-V 虚拟化注册表项。</value>
+  </data>
+  <data name="Error_Host_OpenHclRegistryChangeFailed" xml:space="preserve">
+    <value>无法更改 OpenHCL 固件加载策略：{0}</value>
+  </data>
+  <data name="Error_VmCreate_OpenHclIgvmPermission" xml:space="preserve">
+    <value>无法授予 Hyper-V 对所选 IGVM 文件的读取权限：{0}</value>
   </data>
   <data name="Menu_SwitchServer" xml:space="preserve">
     <value>切换系统为服务器版本</value>
@@ -1617,12 +1650,6 @@
   <data name="Label_ProcessorSettings" xml:space="preserve">
     <value>处理器设置</value>
   </data>
-  <data name="Menu_HideHypervisor" xml:space="preserve">
-    <value>隐藏 Hypervisor 标识</value>
-  </data>
-  <data name="Desc_HideHypervisor" xml:space="preserve">
-    <value>为虚拟机系统隐藏虚拟化标识符，可能有助于绕过软件检测</value>
-  </data>
   <data name="Menu_ExposePmu" xml:space="preserve">
     <value>暴露架构性能监控单元（Arch PMU）</value>
   </data>
@@ -1640,12 +1667,6 @@
   </data>
   <data name="Desc_DisableSpectre" xml:space="preserve">
     <value>禁用漏洞补丁 (如 Spectre)，提升性能但降低安全性</value>
-  </data>
-  <data name="Menu_SocketTopo" xml:space="preserve">
-    <value>启用插槽拓扑</value>
-  </data>
-  <data name="Desc_SocketTopo" xml:space="preserve">
-    <value>映射物理插槽拓扑，优化多插槽软件的运行环境</value>
   </data>
   <data name="Label_Experimental" xml:space="preserve">
     <value>实验功能</value>
@@ -1858,7 +1879,7 @@
     <value>启用动态内存</value>
   </data>
   <data name="Desc_DynRam" xml:space="preserve">
-    <value>允许 Hyper-V 根据负载在最小和最大值之间自动调整</value>
+    <value>在最小内存和最大内存之间动态调整</value>
   </data>
   <data name="Label_MinRam" xml:space="preserve">
     <value>最小内存 (MB)</value>
@@ -1876,10 +1897,10 @@
     <value>选择用于支持虚拟机内存的物理页大小</value>
   </data>
   <data name="Label_MemEncrypt" xml:space="preserve">
-    <value>内存加密</value>
+    <value>内存加密策略</value>
   </data>
   <data name="Desc_MemEncrypt" xml:space="preserve">
-    <value>启用硬件支持的内存隔离与加密</value>
+    <value>设置虚拟机内存的加密要求</value>
   </data>
   <data name="Button_OpenFolder" xml:space="preserve">
     <value>打开所在文件夹</value>
@@ -2536,16 +2557,16 @@
     <value>混合映射模式</value>
   </data>
   <data name="VmPage_MemGranularityAuto" xml:space="preserve">
-    <value>系统自动分配</value>
+    <value>最佳</value>
   </data>
   <data name="VmPage_MemGranularityStandard" xml:space="preserve">
-    <value>标准粒度</value>
+    <value>4 KB</value>
   </data>
   <data name="VmPage_MemGranularityLarge" xml:space="preserve">
-    <value>大页粒度</value>
+    <value>2 MB</value>
   </data>
   <data name="VmPage_MemGranularityHuge" xml:space="preserve">
-    <value>巨型页粒度</value>
+    <value>1 GB</value>
   </data>
   <data name="VmPage_MemTrackingDisable" xml:space="preserve">
     <value>关闭跟踪</value>
@@ -2554,7 +2575,16 @@
     <value>开启跟踪</value>
   </data>
   <data name="VmPage_MemTrackingPerNode" xml:space="preserve">
-    <value>按处理器节点配置</value>
+    <value>按 NUMA 节点配置</value>
+  </data>
+  <data name="VmPage_MemEncryptionDisabled" xml:space="preserve">
+    <value>禁用</value>
+  </data>
+  <data name="VmPage_MemEncryptionIfSupported" xml:space="preserve">
+    <value>支持时启用</value>
+  </data>
+  <data name="VmPage_MemEncryptionAlways" xml:space="preserve">
+    <value>始终启用</value>
   </data>
   <data name="VmPage_SgxLaunchAccessDenied" xml:space="preserve">
     <value>禁止访问</value>
@@ -2647,19 +2677,22 @@
     <value>内存映射模式</value>
   </data>
   <data name="VmRAMSettings_DescMemMappingMode" xml:space="preserve">
-    <value>配置虚拟机内存如何映射到宿主机物理资源</value>
+    <value>设置虚拟机使用的内存后端类型</value>
   </data>
   <data name="VmRAMSettings_LabelMemAccessMonitor" xml:space="preserve">
-    <value>内存访问监控粒度</value>
+    <value>跟踪模式</value>
+  </data>
+  <data name="VmRAMSettings_LabelMemAccessGranularity" xml:space="preserve">
+    <value>访问跟踪粒度</value>
   </data>
   <data name="VmRAMSettings_DescMemAccessMonitor" xml:space="preserve">
-    <value>配置读写监控状态与页面分辨率级别</value>
+    <value>记录虚拟机内存访问的方式</value>
   </data>
   <data name="VmRAMSettings_LabelSgxComputing" xml:space="preserve">
-    <value>Intel SGX 机密计算</value>
+    <value>Intel SGX 应用飞地</value>
   </data>
   <data name="VmRAMSettings_DescSgxComputing" xml:space="preserve">
-    <value>开启处理器硬件级的隔离安全执行环境</value>
+    <value>设置虚拟机是否启用 SGX 飞地内存</value>
   </data>
   <data name="VmRAMSettings_BtnApply" xml:space="preserve">
     <value>应用</value>
@@ -2668,19 +2701,19 @@
     <value>授权控制模式</value>
   </data>
   <data name="VmRAMSettings_DescSgxAuthMode" xml:space="preserve">
-    <value>配置安全飞地的启动授权与运行验证模式</value>
+    <value>设置 SGX 飞地的启动授权和运行验证模式</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMemSize" xml:space="preserve">
     <value>机密内存大小（MB）</value>
   </data>
   <data name="VmRAMSettings_DescSgxMemSize" xml:space="preserve">
-    <value>分配给机密计算使用的物理隔离内存总量</value>
+    <value>设置分配给 SGX 飞地的内存总量</value>
   </data>
   <data name="VmRAMSettings_LabelSgxMsrDefault" xml:space="preserve">
     <value>MSR 运行控制默认值</value>
   </data>
   <data name="VmRAMSettings_DescSgxMsrDefault" xml:space="preserve">
-    <value>处理器特定寄存器初始值</value>
+    <value>设置 SGX 处理器特定寄存器的初始值</value>
   </data>
   <data name="VmRAMSettings_PlaceholderSgxMsr" xml:space="preserve">
     <value>64位十六进制字符串</value>
@@ -2691,8 +2724,14 @@
   <data name="VmRAMSettings_ToggleColdHint" xml:space="preserve">
     <value>冷内存页提示</value>
   </data>
+  <data name="VmRAMSettings_DescColdHint" xml:space="preserve">
+    <value>启用冷内存页提示</value>
+  </data>
   <data name="VmRAMSettings_ToggleHotHint" xml:space="preserve">
     <value>热内存页提示</value>
+  </data>
+  <data name="VmRAMSettings_DescHotHint" xml:space="preserve">
+    <value>启用热内存页提示</value>
   </data>
   <data name="VmRAMSettings_NeedVirtualBacking" xml:space="preserve">
     <value>此功能需虚拟内存后端（请将上方“内存映射模式”设为“虚拟”）</value>
@@ -2701,37 +2740,46 @@
     <value>巨页内存</value>
   </data>
   <data name="VmRAMSettings_DescHugePages" xml:space="preserve">
-    <value>以 1GB 大页支持虚拟机内存，提升大内存虚拟机的访问性能</value>
+    <value>使用 1GB 大页作为虚拟机内存的后备页</value>
   </data>
   <data name="VmRAMSettings_ToggleEpf" xml:space="preserve">
-    <value>半虚拟化分页优化</value>
+    <value>半虚拟化缺页处理（EPF）</value>
+  </data>
+  <data name="VmRAMSettings_DescEpf" xml:space="preserve">
+    <value>允许虚拟机系统使用半虚拟化缺页处理接口</value>
   </data>
   <data name="VmRAMSettings_ToggleCompressStore" xml:space="preserve">
-    <value>独立压缩内存池</value>
+    <value>专用内存压缩存储</value>
+  </data>
+  <data name="VmRAMSettings_DescCompressStore" xml:space="preserve">
+    <value>为此虚拟机启用独立的内存压缩存储</value>
   </data>
   <data name="VmRAMSettings_LabelNumaBlockLimit" xml:space="preserve">
     <value>每节点最大内存 (MB)</value>
   </data>
   <data name="VmRAMSettings_DescNumaBlockLimit" xml:space="preserve">
-    <value>限制单个虚拟 NUMA 节点的最大内存</value>
+    <value>单个虚拟 NUMA 节点的最大内存</value>
   </data>
   <data name="VmRAMSettings_LabelDynMemStep" xml:space="preserve">
-    <value>动态内存调整步长</value>
+    <value>动态内存页对齐</value>
   </data>
   <data name="VmRAMSettings_DescDynMemStep" xml:space="preserve">
-    <value>调整动态分配内存时的最小步进单位</value>
+    <value>增减动态内存时使用的页对齐方式</value>
   </data>
   <data name="VmRAMSettings_LabelCxlExtension" xml:space="preserve">
-    <value>硬件加速扩展（CXL）</value>
+    <value>CXL 内存</value>
   </data>
   <data name="VmRAMSettings_DescCxlExtension" xml:space="preserve">
-    <value>启用高速总线互连协议支持或强制物理地址锁定</value>
+    <value>设置虚拟机是否启用 CXL 内存支持</value>
   </data>
   <data name="VmRAMSettings_ToggleCxlSupport" xml:space="preserve">
     <value>CXL支持</value>
   </data>
   <data name="VmRAMSettings_TogglePhysicalPinning" xml:space="preserve">
-    <value>物理固定</value>
+    <value>允许虚拟机固定 GPA 页面</value>
+  </data>
+  <data name="VmRAMSettings_DescGpaPinning" xml:space="preserve">
+    <value>允许使用 GPA 固定功能</value>
   </data>
   <data name="VmSpacetimeSettings_TitleMgmt" xml:space="preserve">
     <value>时空管理</value>
@@ -2831,6 +2879,9 @@
   </data>
   <data name="Error_VmCreate_RollbackFailed" xml:space="preserve">
     <value>创建失败，且未能自动删除半成品虚拟机「{0}」，请手动删除。（回滚错误：{1}）</value>
+  </data>
+  <data name="Error_VmCreate_ArtifactCleanupFailed" xml:space="preserve">
+    <value>创建回滚未能删除以下文件或目录，请手动清理：{0}</value>
   </data>
   <data name="VmAdvanced_Title" xml:space="preserve">
     <value>高级</value>
@@ -3036,6 +3087,12 @@
   <data name="Cpu_PerfmonPmuDesc" xml:space="preserve">
     <value>允许虚拟机访问通用硬件性能计数器</value>
   </data>
+  <data name="Cpu_PerfmonPmuRequired" xml:space="preserve">
+    <value>请先开启“暴露性能监控单元（PMU）”。</value>
+  </data>
+  <data name="Cpu_PerfmonPmuInUse" xml:space="preserve">
+    <value>请先关闭 PEBS 和 Intel PT，再关闭 PMU。</value>
+  </data>
   <data name="Cpu_PerfmonLbr" xml:space="preserve">
     <value>暴露最后分支记录（LBR）</value>
   </data>
@@ -3046,13 +3103,13 @@
     <value>暴露精确事件采样（PEBS）</value>
   </data>
   <data name="Cpu_PerfmonPebsDesc" xml:space="preserve">
-    <value>允许虚拟机采集精确的性能事件样本</value>
+    <value>允许虚拟机采集精确的性能事件样本，需要同时开启 PMU</value>
   </data>
   <data name="Cpu_PerfmonIpt" xml:space="preserve">
     <value>暴露处理器追踪（Intel PT）</value>
   </data>
   <data name="Cpu_PerfmonIptDesc" xml:space="preserve">
-    <value>允许虚拟机记录处理器指令执行流</value>
+    <value>允许虚拟机记录处理器指令执行流，需要同时开启 PMU</value>
   </data>
   <data name="Cpu_FreqCap" xml:space="preserve">
     <value>频率上限 (MHz)</value>
@@ -3097,10 +3154,10 @@
     <value>设置允许创建的嵌套硬件隔离虚拟机数量上限</value>
   </data>
   <data name="Cpu_MaxClusterPerSocket" xml:space="preserve">
-    <value>每插槽 CCX 数</value>
+    <value>每插槽最大处理器簇数</value>
   </data>
   <data name="Cpu_MaxClusterPerSocketDesc" xml:space="preserve">
-    <value>设置每个虚拟插槽包含的最大核簇数</value>
+    <value>设置每个虚拟 CPU 插槽允许包含的最大处理器簇数</value>
   </data>
   <data name="Cpu_MaxProcPerL3" xml:space="preserve">
     <value>每 L3 处理器数</value>
@@ -3136,10 +3193,10 @@
     <value>默认</value>
   </data>
   <data name="CpuEnum_Shatter_AlwaysEnabled" xml:space="preserve">
-    <value>始终拆分（全 4K）</value>
+    <value>始终启用</value>
   </data>
   <data name="CpuEnum_Shatter_AlwaysDisabled" xml:space="preserve">
-    <value>从不拆分（保留大页）</value>
+    <value>始终禁用</value>
   </data>
   <data name="Gpu_StalePathTitle" xml:space="preserve">
     <value>检测到 GPU 路径变化</value>
@@ -3156,7 +3213,7 @@
     <value>检测到失效的 GPU 分区</value>
   </data>
   <data name="Gpu_StaleMessage" xml:space="preserve">
-    <value>虚拟机「{0}」分配的 GPU 在当前主机已不存在，导致无法开机。
+    <value>虚拟机「{0}」存在残缺的 GPU 分区，或分配的 GPU 在当前主机已不存在，导致无法开机。
 
 是否清除并重试？</value>
   </data>
@@ -3251,6 +3308,9 @@
   </data>
   <data name="Vmcx_IncompleteDda" xml:space="preserve">
     <value>残缺 DDA 设备: vdev{0:D3}(instance={1})缺 HostResources/HostResource/Instance → VM 将无法启动</value>
+  </data>
+  <data name="Vmcx_IncompleteGpuPv" xml:space="preserve">
+    <value>残缺 GPU 分区: vdev{0:D3}(instance={1})缺 InstanceGuid 或 VDEVVersion → VM 将无法启动</value>
   </data>
   <data name="Vmcx_OpFailHr" xml:space="preserve">
     <value>{0} 失败 hr=0x{1}</value>
@@ -3411,15 +3471,6 @@
   <data name="VmPcie_AppliedMessage" xml:space="preserve">
     <value>已应用 PCIe 设置</value>
   </data>
-  <data name="VmPcie_AzureFeatureSetOpenFailed" xml:space="preserve">
-    <value>无法打开 PCIe 仿真所需的宿主注册表配置。</value>
-  </data>
-  <data name="VmPcie_AzureFeatureSetEnableFailed" xml:space="preserve">
-    <value>无法启用 PCIe 仿真所需的宿主策略：{0}</value>
-  </data>
-  <data name="VmPcie_AzureFeatureSetRestoreFailed" xml:space="preserve">
-    <value>无法恢复 PCIe 仿真临时使用的宿主策略：{0}</value>
-  </data>
   <data name="VmPcie_SettingsNotFound" xml:space="preserve">
     <value>未找到虚拟机设置。</value>
   </data>
@@ -3453,6 +3504,12 @@
   <data name="VmAdvanced_FullScsiDesc" xml:space="preserve">
     <value>允许虚拟机向挂载的物理磁盘发送未经筛选的 SCSI 命令</value>
   </data>
+  <data name="VmAdvanced_BatteryTitle" xml:space="preserve">
+    <value>电池状态透传</value>
+  </data>
+  <data name="VmAdvanced_BatteryDesc" xml:space="preserve">
+    <value>允许虚拟机读取宿主的电池状态和剩余电量</value>
+  </data>
   <data name="VmAdvanced_LockOnDisconnectTitle" xml:space="preserve">
     <value>断开时锁定</value>
   </data>
@@ -3470,5 +3527,83 @@
   </data>
   <data name="VmAdvanced_HibernationDesc" xml:space="preserve">
     <value>允许虚拟机使用 S4 休眠和快速启动</value>
+  </data>
+  <data name="Label_CpuInstructionSetCapabilities" xml:space="preserve">
+    <value>指令集能力</value>
+  </data>
+  <data name="Label_CpuInterruptControl" xml:space="preserve">
+    <value>中断控制</value>
+  </data>
+  <data name="Label_CpuProcessorTopology" xml:space="preserve">
+    <value>处理器拓扑</value>
+  </data>
+  <data name="Label_CpuPerformanceMonitoring" xml:space="preserve">
+    <value>性能监控</value>
+  </data>
+  <data name="Label_CpuFrequencyControl" xml:space="preserve">
+    <value>频率调节</value>
+  </data>
+  <data name="Label_CpuMemoryAddressing" xml:space="preserve">
+    <value>寻址与分页</value>
+  </data>
+  <data name="Label_CpuSecurityIsolation" xml:space="preserve">
+    <value>安全隔离</value>
+  </data>
+  <data name="Label_MemoryMapping" xml:space="preserve">
+    <value>内存映射</value>
+  </data>
+  <data name="Label_MemoryPageManagement" xml:space="preserve">
+    <value>内存拓扑</value>
+  </data>
+  <data name="Label_MemoryHardwareExtensions" xml:space="preserve">
+    <value>硬件扩展</value>
+  </data>
+  <data name="Label_MemoryConfidentialComputing" xml:space="preserve">
+    <value>机密计算</value>
+  </data>
+  <data name="Xaml_OpenHclImage" xml:space="preserve">
+    <value>OpenHCL IGVM 镜像</value>
+  </data>
+  <data name="Xaml_Placeholder_OpenHclIgvm" xml:space="preserve">
+    <value>选择 OpenHCL IGVM 固件镜像</value>
+  </data>
+  <data name="VmPage_SelectOpenHclIgvm" xml:space="preserve">
+    <value>选择 OpenHCL IGVM 镜像</value>
+  </data>
+  <data name="VmPage_OpenHclIgvmFilter" xml:space="preserve">
+    <value>IGVM 固件镜像 (*.bin;*.igvm)|*.bin;*.igvm|所有文件 (*.*)|*.*</value>
+  </data>
+  <data name="VmPage_OpenHclIgvmRequired" xml:space="preserve">
+    <value>OpenHCL 需要有效的 IGVM 镜像文件。</value>
+  </data>
+  <data name="VmPage_OpenHclRequiresV12" xml:space="preserve">
+    <value>OpenHCL 要求虚拟机配置版本不低于 12.0。</value>
+  </data>
+  <data name="VmPage_DynMemAlignmentDisabled" xml:space="preserve">
+    <value>禁用</value>
+  </data>
+  <data name="Label_MemoryAccessTracking" xml:space="preserve">
+    <value>内存访问跟踪</value>
+  </data>
+  <data name="VmRAMSettings_DescMemAccessGranularity" xml:space="preserve">
+    <value>设置内存访问记录所采用的区域大小</value>
+  </data>
+  <data name="VmRAMSettings_MemTrackingDisabledHint" xml:space="preserve">
+    <value>请先开启内存访问跟踪</value>
+  </data>
+  <data name="VmRAMSettings_MemTrackingPerNodeHint" xml:space="preserve">
+    <value>当前使用各 NUMA 节点自己的跟踪粒度</value>
+  </data>
+  <data name="Error_VmPower_WorkerNotFound" xml:space="preserve">
+    <value>虚拟机未能关机，并且无法确定其工作进程。</value>
+  </data>
+  <data name="Error_VmPower_InvalidWorkerProcess" xml:space="preserve">
+    <value>拒绝终止进程 {0}：该进程不是 Hyper-V 虚拟机工作进程。</value>
+  </data>
+  <data name="Error_VmPower_TerminateWorkerFailed" xml:space="preserve">
+    <value>无法终止虚拟机“{0}”的 Hyper-V 工作进程：{1}</value>
+  </data>
+  <data name="Error_VmPower_StillNotOff" xml:space="preserve">
+    <value>已终止虚拟机“{0}”的工作进程，但虚拟机仍未进入关机状态。</value>
   </data>
 </root>

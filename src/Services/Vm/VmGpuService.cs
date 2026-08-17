@@ -16,6 +16,38 @@ namespace ExHyperV.Services
     {
         private readonly VmQueryService _queryService;
         private readonly AsyncLocal<ConcurrentQueue<string>?> _linkWarnings = new();
+        private readonly AsyncLocal<GpuDriverPackagePlan?> _activeDriverPackagePlan = new();
+
+        private static readonly string[] IntelGpuRuntimeRegistryValueNames =
+        {
+            "OpenCLDriverName",
+            "OpenCLDriverNameWow",
+            "LevelZeroDriverPath",
+            "DriverStorePathForComputeRuntime",
+            "DriverStorePathForMediaSDK",
+            "DriverStorePathForVPL",
+            "DriverStorePathForMDF",
+            "VulkanDriverName",
+            "VulkanDriverNameWow",
+            "OpenGLDriverName",
+            "OpenGLDriverNameWow",
+            "OpenGLFlags",
+            "OpenGLFlagsWow",
+            "OpenGLInstalled",
+            "OpenGLVersion",
+            "OpenGLVersionWow",
+            "ContentProtectionDriverName",
+            "ControlApiPath",
+            "ControlApiPath32"
+        };
+
+        private enum FilePromotionMode
+        {
+            PreserveExisting,
+            WhenNewer,
+            Overwrite
+        }
+
         public VmGpuService(VmQueryService queryService)
         {
             _queryService = queryService;
@@ -105,78 +137,32 @@ namespace ExHyperV.Services
             foreach (var (instanceId, name, manu, driverVersion) in displayAdapters)
             {
                 if (string.IsNullOrEmpty(name)) continue;
+                string vendor = pciInfoProvider.GetVendorFromInstanceId(instanceId, manu);
                 gpuList.Add(new GpuInfo
                 {
                     Name = name,
-                    Manu = string.IsNullOrEmpty(manu) ? pciInfoProvider.GetVendorFromInstanceId(instanceId) : manu,
+                    Manu = string.IsNullOrEmpty(manu) ? vendor : manu,
                     InstanceId = instanceId,
                     DriverVersion = driverVersion,
-                    Vendor = pciInfoProvider.GetVendorFromInstanceId(instanceId)
+                    Vendor = vendor,
+                    MemoryBytes = GpuMemoryResolver.ReadBytes(instanceId, manu, vendor)
                 });
             }
 
-            // 2. GPU RAM 注册表
-            try
-            {
-                var gpuRamMap = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-                using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(
-                    Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
-                using var classKey = baseKey.OpenSubKey(
-                    @"SYSTEM\ControlSet001\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}");
-                if (classKey != null)
-                {
-                    foreach (var subKeyName in classKey.GetSubKeyNames())
-                    {
-                        try
-                        {
-                            using var subKey = classKey.OpenSubKey(subKeyName);
-                            if (subKey == null) continue;
-                            string matchingId = subKey.GetValue("MatchingDeviceId")?.ToString()?.ToUpper();
-                            if (string.IsNullOrEmpty(matchingId)) continue;
-                            long memSize = 0;
-                            var qwMem = subKey.GetValue("HardwareInformation.qwMemorySize");
-                            if (qwMem != null) try { memSize = Convert.ToInt64(qwMem); } catch { }
-                            if (memSize == 0)
-                            {
-                                var mem = subKey.GetValue("HardwareInformation.MemorySize");
-                                if (mem != null && mem is not byte[]) try { memSize = Convert.ToInt64(mem); } catch { }
-                            }
-                            if (memSize > 0) gpuRamMap[matchingId] = memSize;
-                        }
-                        catch { continue; }
-                    }
-                }
-
-                foreach (var existingGpu in gpuList)
-                {
-                    var matched = gpuRamMap.FirstOrDefault(kv =>
-                    {
-                        Debug.WriteLine($"MatchingId: '{kv.Key}', GpuInstanceId: '{existingGpu.InstanceId.ToUpper()}'");
-                        return existingGpu.InstanceId.ToUpper().Contains(kv.Key);
-                    });
-                    if (matched.Key != null)
-                        existingGpu.Ram = matched.Value.ToString();
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"GPU RAM registry error: {ex.Message}");
-            }
-
-            // 3. Msvm_PartitionableGpu
+            // 2. Msvm_PartitionableGpu
             var partResp = await WmiApi.QueryAsync(
                 "SELECT Name FROM Msvm_PartitionableGpu",
                 obj => obj["Name"]?.ToString() ?? "");
 
             if (partResp.HasData)
             {
-                foreach (var pname in partResp.Data)
+                foreach (var partitionableGpuPath in partResp.Data)
                 {
-                    if (string.IsNullOrEmpty(pname)) continue;
-                    string normalizedPName = NormalizeDeviceId(pname);
+                    if (string.IsNullOrEmpty(partitionableGpuPath)) continue;
+                    string normalizedPartitionableGpuPath = NormalizeDeviceId(partitionableGpuPath);
                     var existingGpu = gpuList.FirstOrDefault(g =>
-                        NormalizeDeviceId(g.InstanceId) == normalizedPName);
-                    if (existingGpu != null) existingGpu.Pname = pname;
+                        NormalizeDeviceId(g.InstanceId) == normalizedPartitionableGpuPath);
+                    if (existingGpu != null) existingGpu.PartitionableGpuPath = partitionableGpuPath;
                 }
             }
 
@@ -587,65 +573,65 @@ namespace ExHyperV.Services
                     return string.Format(Properties.Resources.Error_Gpu_InvalidSystemPart, assignedDriveLetter);
                 }
 
-                string sourceFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "DriverStore", "FileRepository");
+                GpuDriverPackagePlan packagePlan = await Task.Run(() =>
+                    GpuDriverPackageResolver.Resolve(gpuInstancePath, gpuManu));
+                _activeDriverPackagePlan.Value = packagePlan;
+                foreach (string warning in packagePlan.Warnings) Log(warning);
                 string destFolder = Path.Combine(assignedDriveLetter, "Windows", "System32", "HostDriverStore", "FileRepository");
 
-                if (Directory.Exists(destFolder))
-                {
-                    RemoveReadOnlyAttribute(destFolder);
-                }
-                else
-                {
-                    Directory.CreateDirectory(destFolder);
-                }
+                Directory.CreateDirectory(destFolder);
 
                 Log(Properties.Resources.Msg_Gpu_SyncingFiles);
-
-                using (Process p = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "robocopy.exe",
-                    Arguments = $"\"{sourceFolder}\" \"{destFolder}\" /E /R:1 /W:1 /MT:32 /NDL /NJH /NJS /NC /NS",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                }))
-                {
-                    await p.WaitForExitAsync();
-                }
-
-                await Task.Run(() => SetFolderReadOnly(destFolder));
+                await CopyDriverRepositoryAsync(packagePlan.HostFileRepository, destFolder, Log);
 
                 // 同步重活（注册表提取 + 各厂商 Promote*：内部对每个文件 spawn cmd.exe 并同步 WaitForExit 几十~上百次）
                 // 挪到后台线程——否则作为 robocopy await 之后的续体跑在 UI 线程上，会冻结主界面（转圈/窗口都卡死）。
                 // Log 回调仍在 UI 续体里执行（这些 Task.Run 之间的代码在 UI 线程），更新 task.Description 安全、无需 Dispatcher。
-                await Task.Run(() => PromoteRegistryDefinedFiles(assignedDriveLetter)); // 微软注册表文件提取
+                await Task.Run(() => PromoteRegistryDefinedFiles(assignedDriveLetter, packagePlan)); // 微软注册表文件提取
 
-                if (gpuManu.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    Log(Properties.Resources.Msg_Gpu_InjectingReg);
-                    string nvidiaRegResult = await Task.Run(() =>
+                    if (packagePlan.Vendor == GpuDriverVendor.Nvidia)
                     {
-                        string result = NvidiaReg(assignedDriveLetter);
-                        PromoteNvidiaFiles(assignedDriveLetter);
-                        return result;
-                    });
-                    if (!string.Equals(nvidiaRegResult, "OK", StringComparison.Ordinal))
-                    {
-                        try { Log(nvidiaRegResult); }
-                        catch { }
+                        Log(Properties.Resources.Msg_Gpu_InjectingReg);
+                        string nvidiaRegResult = await Task.Run(() =>
+                        {
+                            string result = PatchNvidiaServiceRegistry(assignedDriveLetter, packagePlan);
+                            PromoteNvidiaFiles(assignedDriveLetter);
+                            return result;
+                        });
+                        if (!string.Equals(nvidiaRegResult, "OK", StringComparison.Ordinal))
+                            Log(nvidiaRegResult);
                     }
-                    await NvidiaProgramFoldersAsync(assignedDriveLetter, Log);
+                    else if (packagePlan.Vendor == GpuDriverVendor.Intel)
+                    {
+                        await Task.Run(() =>
+                        {
+                            PromoteIntelGpuFiles(assignedDriveLetter);
+                            PromoteIntelGpuRuntimeRegistry(assignedDriveLetter, packagePlan.DisplayClassSubKeyName);
+                        });
+                    }
+                    else if (packagePlan.Vendor == GpuDriverVendor.Amd)
+                    {
+                        await Task.Run(() => PromoteAmdGpuFiles(assignedDriveLetter, packagePlan));
+                    }
+                    else if (packagePlan.Vendor == GpuDriverVendor.Qualcomm)
+                    {
+                        await Task.Run(() => PromoteQualcommGpuFiles(assignedDriveLetter));
+                    }
                 }
-                else if (gpuManu.Contains("Intel", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex)
                 {
-                    await Task.Run(() => PromoteIntelGpuFiles(assignedDriveLetter));
+                    Log($"[GPU Optional] Vendor-specific promotion was incomplete: {ex.Message}");
                 }
-                else if (gpuManu.Contains("AMD", StringComparison.OrdinalIgnoreCase) || gpuManu.Contains("Advanced", StringComparison.OrdinalIgnoreCase))
+
+                try
                 {
-                    await Task.Run(() => PromoteAmdGpuFiles(assignedDriveLetter));
+                    await CopyVendorProgramFoldersAsync(packagePlan.Vendor, assignedDriveLetter, Log);
                 }
-                else if (gpuManu.Contains("Qualcomm", StringComparison.OrdinalIgnoreCase) || gpuManu.Contains("QCOM", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex)
                 {
-                    await Task.Run(() => PromoteQualcommGpuFiles(assignedDriveLetter));
+                    Log($"[GPU Optional] Vendor software directories were not copied completely: {ex.Message}");
                 }
 
 
@@ -660,24 +646,39 @@ namespace ExHyperV.Services
                     catch { }
                 }
                 _linkWarnings.Value = null;
+                _activeDriverPackagePlan.Value = null;
 
                 if (isPhysical && hostDiskNumber != -1 && detachSuccess)
                 {
                     Log(Properties.Resources.Msg_Gpu_Remounting);
                     try
                     {
-                        await VmStorageService.RemoveAllPartitionAccessPathsAsync(hostDiskNumber);
+                        if (!string.IsNullOrEmpty(assignedDriveLetter))
+                        {
+                            bool accessPathRemoved = await VmStorageService.RemovePartitionAccessPathAsync(
+                                hostDiskNumber,
+                                partition.PartitionNumber,
+                                assignedDriveLetter[0]);
+                            if (!accessPathRemoved)
+                                Log($"[GPU Cleanup] Temporary access path {assignedDriveLetter} could not be removed explicitly.");
+                        }
                         await HostDiskService.SetDiskOfflineStatusAsync(hostDiskNumber, true);
                         await Task.Delay(1000);
 
-                        await VmStorageService.AddDriveAsync(
+                        var remountResult = await VmStorageService.AddDriveAsync(
                             vmName, savedCtrlType, savedCtrlNum, savedCtrlLoc,
                             "HardDisk", pathOrNumber: hostDiskNumber.ToString(),
                             isPhysical: true);
+                        if (!remountResult.Success)
+                            throw new IOException($"Physical disk {hostDiskNumber} could not be reattached: {remountResult.Message}");
                         Log(Properties.Resources.Msg_Gpu_RemountSuccess);
 
                     }
-                    catch (Exception ex) { Log(string.Format(Properties.Resources.Error_Gpu_RemountFailed, ex.Message)); }
+                    catch (Exception ex)
+                    {
+                        Log(string.Format(Properties.Resources.Error_Gpu_RemountFailed, ex.Message));
+                        throw;
+                    }
                 }
                 else if (!string.IsNullOrEmpty(diskTarget?.Path))
                 {
@@ -687,7 +688,36 @@ namespace ExHyperV.Services
             }
         }
 
-        private void PromoteRegistryDefinedFiles(string assignedDriveLetter)
+        private static async Task CopyDriverRepositoryAsync(
+            string hostFileRepository,
+            string guestFileRepository,
+            Action<string> log)
+        {
+            if (!Directory.Exists(hostFileRepository))
+                throw new DirectoryNotFoundException($"Host DriverStore FileRepository was not found: {hostFileRepository}");
+
+            if (Directory.Exists(guestFileRepository)) RemoveReadOnlyAttribute(guestFileRepository);
+            else Directory.CreateDirectory(guestFileRepository);
+
+            log($"[GPU DriverStore] {hostFileRepository}");
+            using Process process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "robocopy.exe",
+                Arguments = $"\"{hostFileRepository}\" \"{guestFileRepository}\" /E /R:1 /W:1 /MT:32 /XJ /NDL /NJH /NJS /NC /NS",
+                CreateNoWindow = true,
+                UseShellExecute = false
+            }) ?? throw new InvalidOperationException("Unable to start robocopy.exe.");
+            await process.WaitForExitAsync();
+            // Robocopy 0..7 are success states; 8 and above mean at least one copy failure.
+            if (process.ExitCode >= 8)
+                throw new IOException($"Copying DriverStore FileRepository failed with robocopy exit code {process.ExitCode}.");
+
+            await Task.Run(() => SetFolderReadOnly(guestFileRepository));
+        }
+
+        private void PromoteRegistryDefinedFiles(
+            string assignedDriveLetter,
+            GpuDriverPackagePlan packagePlan)
         {
             string classGuidPath = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
 
@@ -697,19 +727,50 @@ namespace ExHyperV.Services
                 using var classKey = baseKey.OpenSubKey(classGuidPath);
                 if (classKey == null) return;
 
-                foreach (var subKeyName in classKey.GetSubKeyNames())
+                void ProcessAdapterKey(Microsoft.Win32.RegistryKey adapterKey)
                 {
-                    using var subKey = classKey.OpenSubKey(subKeyName);
-                    if (subKey == null) continue;
-                    ProcessPromotionRegistryKey(subKey, "CopyToVmWhenNewer", assignedDriveLetter, "System32");
-                    ProcessPromotionRegistryKey(subKey, "CopyToVmOverwrite", assignedDriveLetter, "System32");
+                    ProcessPromotionRegistryKey(
+                        adapterKey,
+                        "CopyToVmWhenNewer",
+                        assignedDriveLetter,
+                        "System32",
+                        packagePlan.PrimaryPackageNames);
+                    ProcessPromotionRegistryKey(
+                        adapterKey,
+                        "CopyToVmOverwrite",
+                        assignedDriveLetter,
+                        "System32",
+                        packagePlan.PrimaryPackageNames);
 
                     if (Directory.Exists(Path.Combine(assignedDriveLetter, "Windows", "SysWOW64")))
                     {
-                        ProcessPromotionRegistryKey(subKey, "CopyToVmWhenNewerWow64", assignedDriveLetter, "SysWOW64");
-                        ProcessPromotionRegistryKey(subKey, "CopyToVmOverwriteWow64", assignedDriveLetter, "SysWOW64");
+                        ProcessPromotionRegistryKey(
+                            adapterKey,
+                            "CopyToVmWhenNewerWow64",
+                            assignedDriveLetter,
+                            "SysWOW64",
+                            packagePlan.PrimaryPackageNames);
+                        ProcessPromotionRegistryKey(
+                            adapterKey,
+                            "CopyToVmOverwriteWow64",
+                            assignedDriveLetter,
+                            "SysWOW64",
+                            packagePlan.PrimaryPackageNames);
                     }
                 }
+
+                string selectedSubKeyName = packagePlan.DisplayClassSubKeyName;
+                if (!string.IsNullOrEmpty(selectedSubKeyName))
+                {
+                    using var selectedKey = classKey.OpenSubKey(selectedSubKeyName);
+                    if (selectedKey != null)
+                    {
+                        ProcessAdapterKey(selectedKey);
+                        return;
+                    }
+                }
+
+                throw new InvalidOperationException("The selected display-class registry key could not be opened.");
             }
             catch (Exception ex)
             {
@@ -740,7 +801,6 @@ namespace ExHyperV.Services
             LinkSingleFile(assignedDriveLetter, "vulkan-1-x64.dll", "vulkan-1.dll", s32);
             LinkSingleFile(assignedDriveLetter, "vulkan-1-x64.dll", "vulkan-1-999-0-0-0.dll", s32);
             LinkSingleFile(assignedDriveLetter, "vulkaninfo-x64.exe", "vulkaninfo.exe", s32);
-            LinkSingleFile(assignedDriveLetter, "NV_DISP.CAT", "oem25.cat", @"System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}");
 
             // --- 2. System32 特殊子目录 ---
             LinkSingleFile(assignedDriveLetter, "license.txt", "license.txt", @"System32\drivers\NVIDIA Corporation");
@@ -785,8 +845,6 @@ namespace ExHyperV.Services
         {
             string s32 = "System32";
             string sw64 = "SysWOW64";
-            string catPath = @"System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}";
-
             // --- 1. System32 (64位原生组件) ---
             // 基础管理与 API
             LinkSingleFile(assignedDriveLetter, "ControlLib.dll", "ControlLib.dll", s32);
@@ -809,11 +867,6 @@ namespace ExHyperV.Services
             LinkSingleFile(assignedDriveLetter, "ze_tracing_layer.dll", "ze_tracing_layer.dll", s32);
             LinkSingleFile(assignedDriveLetter, "ze_validation_layer.dll", "ze_validation_layer.dll", s32);
 
-            // 驱动证书映射 (CatRoot)
-            LinkSingleFile(assignedDriveLetter, "igdlh.cat", "oem95.cat", catPath);
-            LinkSingleFile(assignedDriveLetter, "igdlh.cat", "oem108.cat", catPath);
-
-
             // --- 2. SysWOW64 (32位兼容组件) ---
             // 基础管理
             LinkSingleFile(assignedDriveLetter, "ControlLib32.dll", "ControlLib32.dll", sw64);
@@ -831,11 +884,260 @@ namespace ExHyperV.Services
             LinkSingleFile(assignedDriveLetter, "vulkaninfo-32.exe", "vulkaninfo.exe", sw64);
             LinkSingleFile(assignedDriveLetter, "vulkaninfo-32.exe", "vulkaninfo-1-999-0-0-0.exe", sw64);
         }
-        private void PromoteAmdGpuFiles(string assignedDriveLetter)
+
+        private void PromoteIntelGpuRuntimeRegistry(
+            string assignedDriveLetter,
+            string selectedClassSubKeyName)
+        {
+            const string displayClassGuid = "{4d36e968-e325-11ce-bfc1-08002be10318}";
+            string systemHiveFile = Path.Combine(
+                assignedDriveLetter,
+                "Windows",
+                "System32",
+                "Config",
+                "SYSTEM");
+
+            if (!File.Exists(systemHiveFile))
+                throw new FileNotFoundException("The offline SYSTEM hive was not found.", systemHiveFile);
+
+            using var hostBaseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(
+                Microsoft.Win32.RegistryHive.LocalMachine,
+                Microsoft.Win32.RegistryView.Registry64);
+            if (string.IsNullOrWhiteSpace(selectedClassSubKeyName))
+                throw new InvalidOperationException("Unable to map the selected Intel GPU-PV instance to its display-class registry key.");
+
+            using var hostAdapterKey = hostBaseKey.OpenSubKey(
+                $@"SYSTEM\CurrentControlSet\Control\Class\{displayClassGuid}\{selectedClassSubKeyName}");
+            if (hostAdapterKey == null)
+                throw new InvalidOperationException("The selected Intel display-class registry key does not exist.");
+
+            var runtimeValues = new List<(string Name, object Value, Microsoft.Win32.RegistryValueKind Kind)>();
+            foreach (string valueName in IntelGpuRuntimeRegistryValueNames)
+            {
+                object? value = hostAdapterKey.GetValue(
+                    valueName,
+                    null,
+                    Microsoft.Win32.RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (value == null) continue;
+
+                Microsoft.Win32.RegistryValueKind valueKind;
+                try { valueKind = hostAdapterKey.GetValueKind(valueName); }
+                catch { continue; }
+
+                runtimeValues.Add((
+                    valueName,
+                    RewriteDriverStoreRegistryValue(value),
+                    valueKind));
+            }
+
+            if (runtimeValues.Count == 0)
+                throw new InvalidOperationException("The selected Intel driver does not expose GPU runtime registry values.");
+
+            string? levelZeroDriverPath = runtimeValues
+                .FirstOrDefault(item => item.Name.Equals("LevelZeroDriverPath", StringComparison.OrdinalIgnoreCase))
+                .Value as string;
+
+            string offlineHiveName = $"ExHyperVIntelOfflineSystem_{Guid.NewGuid():N}";
+            if (ExecuteCommand($@"reg load HKLM\{offlineHiveName} ""{systemHiveFile}""") != 0)
+                throw new InvalidOperationException(Properties.Resources.Error_OfflineLoadVmRegistryFailed);
+
+            try
+            {
+                using var offlineSystem = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(offlineHiveName, writable: true)
+                    ?? throw new InvalidOperationException("The loaded offline SYSTEM hive could not be opened.");
+
+                IReadOnlyCollection<string> controlSetNames = GetOfflineControlSetNames(offlineSystem);
+                string currentControlSetName = GetOfflineCurrentControlSetName(offlineSystem);
+                var levelZeroAnchorSubKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // Validate every destination before writing anything. An absent Level Zero anchor is
+                // fatal only for the active control set; stale backup control sets are synchronized
+                // when possible but must not make an otherwise bootable deployment fail.
+                foreach (string controlSetName in controlSetNames)
+                {
+                    string classRoot = $@"{controlSetName}\Control\Class\{displayClassGuid}";
+                    using var existingRuntimeKey = offlineSystem.OpenSubKey(
+                        $@"{classRoot}\{selectedClassSubKeyName}");
+                    if (existingRuntimeKey != null && !IsCompatibleIntelRuntimeTarget(existingRuntimeKey))
+                    {
+                        throw new InvalidOperationException(
+                            $"The offline display-class key {selectedClassSubKeyName} belongs to another display driver; Intel runtime values were not written.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(levelZeroDriverPath)) continue;
+
+                    string? anchorSubKeyName = FindOfflineHyperVVideoClassSubKeyName(offlineSystem, classRoot);
+                    if (!string.IsNullOrWhiteSpace(anchorSubKeyName))
+                    {
+                        levelZeroAnchorSubKeys[controlSetName] = anchorSubKeyName;
+                    }
+                    else if (controlSetName.Equals(currentControlSetName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException("The offline Microsoft Hyper-V Video display-class key was not found in the active control set.");
+                    }
+                }
+
+                foreach (string controlSetName in controlSetNames)
+                {
+                    string classRoot = $@"{controlSetName}\Control\Class\{displayClassGuid}";
+
+                    // Intel NEO gets DeviceRegistryPath from the selected host adapter through
+                    // KMTQAITYPE_UMDRIVERPRIVATE. GPU-PV preserves that numeric class-key name,
+                    // so populate it before the virtual render device starts for the first time.
+                    using (var runtimeKey = offlineSystem.CreateSubKey(
+                        $@"{classRoot}\{selectedClassSubKeyName}",
+                        writable: true))
+                    {
+                        if (runtimeKey == null)
+                            throw new InvalidOperationException("Unable to create the offline Intel runtime registry key.");
+                        if (!IsCompatibleIntelRuntimeTarget(runtimeKey))
+                            throw new InvalidOperationException(
+                                $"The offline display-class key {selectedClassSubKeyName} belongs to another display driver; Intel runtime values were not written.");
+
+                        foreach (var runtimeValue in runtimeValues)
+                            runtimeKey.SetValue(runtimeValue.Name, runtimeValue.Value, runtimeValue.Kind);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(levelZeroDriverPath) &&
+                        levelZeroAnchorSubKeys.TryGetValue(controlSetName, out string? anchorSubKeyName))
+                    {
+                        // The Windows Level Zero loader enumerates present guest display DEVNODEs and
+                        // reads LevelZeroDriverPath from their software keys. The VRD software key does
+                        // not exist until first boot, but Hyper-V Video does, so use that stable display
+                        // key as a discovery anchor without replacing any other driver's registration.
+                        using var levelZeroAnchorKey = offlineSystem.OpenSubKey(
+                            $@"{classRoot}\{anchorSubKeyName}",
+                            writable: true);
+                        if (levelZeroAnchorKey == null)
+                            throw new InvalidOperationException("The offline Microsoft Hyper-V Video registry key could not be opened.");
+
+                        levelZeroAnchorKey.SetValue(
+                            "LevelZeroDriverPath",
+                            levelZeroDriverPath,
+                            Microsoft.Win32.RegistryValueKind.String);
+                    }
+                }
+            }
+            finally
+            {
+                ExecuteCommand($"reg unload HKLM\\{offlineHiveName}");
+            }
+        }
+
+        private static object RewriteDriverStoreRegistryValue(object value)
+        {
+            static string Rewrite(string text) => Regex.Replace(
+                text,
+                @"(?i)([\\/])System32([\\/])DriverStore([\\/])",
+                "$1System32$2HostDriverStore$3");
+
+            return value switch
+            {
+                string text => Rewrite(text),
+                string[] texts => texts.Select(Rewrite).ToArray(),
+                _ => value
+            };
+        }
+
+        private static IReadOnlyCollection<string> GetOfflineControlSetNames(Microsoft.Win32.RegistryKey offlineSystem)
+        {
+            var controlSets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            controlSets.Add(GetOfflineCurrentControlSetName(offlineSystem));
+            using var selectKey = offlineSystem.OpenSubKey("Select");
+            foreach (string valueName in new[] { "Default", "LastKnownGood" })
+            {
+                if (selectKey?.GetValue(valueName) is int controlSetNumber && controlSetNumber > 0)
+                    controlSets.Add($"ControlSet{controlSetNumber:D3}");
+            }
+
+            return controlSets.ToArray();
+        }
+
+        private static string GetOfflineCurrentControlSetName(Microsoft.Win32.RegistryKey offlineSystem)
+        {
+            using var selectKey = offlineSystem.OpenSubKey("Select");
+            return selectKey?.GetValue("Current") is int controlSetNumber && controlSetNumber > 0
+                ? $"ControlSet{controlSetNumber:D3}"
+                : "ControlSet001";
+        }
+
+        private static bool IsCompatibleIntelRuntimeTarget(Microsoft.Win32.RegistryKey runtimeKey)
+        {
+            string driverDesc = runtimeKey.GetValue("DriverDesc")?.ToString() ?? string.Empty;
+            string providerName = runtimeKey.GetValue("ProviderName")?.ToString() ?? string.Empty;
+            string infPath = runtimeKey.GetValue("InfPath")?.ToString() ?? string.Empty;
+            string matchingDeviceId = runtimeKey.GetValue("MatchingDeviceId")?.ToString() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(driverDesc) &&
+                string.IsNullOrWhiteSpace(providerName) &&
+                string.IsNullOrWhiteSpace(infPath) &&
+                string.IsNullOrWhiteSpace(matchingDeviceId))
+            {
+                return true;
+            }
+
+            string identity = $"{driverDesc}|{providerName}|{infPath}|{matchingDeviceId}";
+            if (identity.Contains("Intel", StringComparison.OrdinalIgnoreCase) ||
+                matchingDeviceId.Contains("VEN_8086", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return infPath.Equals("vrd.inf", StringComparison.OrdinalIgnoreCase) ||
+                   (providerName.Contains("Microsoft", StringComparison.OrdinalIgnoreCase) &&
+                    driverDesc.Contains("Virtual Render", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string? FindOfflineHyperVVideoClassSubKeyName(
+            Microsoft.Win32.RegistryKey offlineSystem,
+            string classRoot)
+        {
+            using var classKey = offlineSystem.OpenSubKey(classRoot);
+            if (classKey == null) return null;
+
+            foreach (string subKeyName in classKey.GetSubKeyNames()
+                         .OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
+            {
+                Microsoft.Win32.RegistryKey? candidate = null;
+                try { candidate = classKey.OpenSubKey(subKeyName); }
+                catch (UnauthorizedAccessException) { continue; }
+                catch (System.Security.SecurityException) { continue; }
+                using (candidate)
+                {
+                    if (candidate == null) continue;
+
+                    string driverDesc;
+                    string providerName;
+                    string infPath;
+                    try
+                    {
+                        driverDesc = candidate.GetValue("DriverDesc")?.ToString() ?? string.Empty;
+                        providerName = candidate.GetValue("ProviderName")?.ToString() ?? string.Empty;
+                        infPath = candidate.GetValue("InfPath")?.ToString() ?? string.Empty;
+                    }
+                    catch (UnauthorizedAccessException) { continue; }
+                    catch (System.Security.SecurityException) { continue; }
+                    if ((driverDesc.Contains("Hyper-V Video", StringComparison.OrdinalIgnoreCase) ||
+                         infPath.Equals("wvmbusvideo.inf", StringComparison.OrdinalIgnoreCase)) &&
+                        providerName.Contains("Microsoft", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return subKeyName;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private void PromoteAmdGpuFiles(
+            string assignedDriveLetter,
+            GpuDriverPackagePlan packagePlan)
         {
             string s32 = "System32";
             string sw64 = "SysWOW64";
-            string catPath = @"System32\CatRoot\{F750E6C3-38EE-11D1-85E5-00C04FC295EE}";
+            IReadOnlyCollection<string> selectedPackageNames = packagePlan.PrimaryPackageNames;
+            IReadOnlyCollection<string> openClPackageNames = packagePlan.AmdOpenClPackageNames;
+            IReadOnlyCollection<string> amdWinPackageNames = packagePlan.AmdWinPackageNames;
 
             // --- 1. System32 (64位原生组件) ---
             // 核心渲染与 API 
@@ -862,22 +1164,36 @@ namespace ExHyperV.Services
             LinkSingleFile(assignedDriveLetter, "EEURestart.exe", "EEURestart.exe", s32);
             LinkSingleFile(assignedDriveLetter, "GameManager64.dll", "GameManager64.dll", s32);
 
+            // DDA before/after parity: display-package top-level runtime entries.
+            LinkSingleFile(assignedDriveLetter, "amdmiracast.dll", "amdmiracast.dll", s32, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "amf-mft-mjpeg-decoder64.dll", "amf-mft-mjpeg-decoder64.dll", s32, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "atidemgy.dll", "atidemgy.dll", s32, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "atimuixx.dll", "atimuixx.dll", s32, FilePromotionMode.PreserveExisting, selectedPackageNames);
+
+            // The OpenCL/HIP companion package is declared by the active display INF and has the same DriverVer.
+            // Never fall back to a different amdocl generation when multiple driver versions coexist.
+            LinkSingleFile(assignedDriveLetter, "amd_comgr_2.dll", "amd_comgr_2.dll", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "amdhip64_6.dll", "amdhip64_6.dll", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "amdmmcl.dll", "amdmmcl.dll", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "amdmmcl6.dll", "amdmmcl6.dll", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "clinfo.exe", "clinfo.exe", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "hiprt02000_amd.hipfb", "hiprt02000_amd.hipfb", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "hiprt0200064.dll", "hiprt0200064.dll", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "oro_compiled_kernels.hipfb", "oro_compiled_kernels.hipfb", s32, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+
+            // AMD Windows support components. RapidFire requires the Microsoft VC++ runtime at load time;
+            // that external prerequisite is intentionally not installed by GPU driver injection.
+            LinkSingleFile(assignedDriveLetter, "amdlogum.exe", "amdlogum.exe", s32, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "dgtrayicon.exe", "dgtrayicon.exe", s32, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "Rapidfire64.dll", "Rapidfire64.dll", s32, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "RapidFireServer64.dll", "RapidFireServer64.dll", s32, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
+
             // 资源与数据
             LinkSingleFile(assignedDriveLetter, "atiapfxx.blb", "atiapfxx.blb", s32);
             LinkSingleFile(assignedDriveLetter, "ativvsva.dat", "ativvsva.dat", s32);
             LinkSingleFile(assignedDriveLetter, "ativvsvl.dat", "ativvsvl.dat", s32);
             LinkSingleFile(assignedDriveLetter, "AMDKernelEvents.mc", "AMDKernelEvents.man", s32); 
             LinkSingleFile(assignedDriveLetter, "detoured64.dll", "detoured.dll", s32);
-
-            // 特殊子目录 (amdkmpfd)
-            string amdSubDir = @"System32\AMD\amdkmpfd";
-            LinkSingleFile(assignedDriveLetter, "amdkmpfd.ctz", "amdkmpfd.ctz", amdSubDir);
-            LinkSingleFile(assignedDriveLetter, "amdkmpfd.itz", "amdkmpfd.itz", amdSubDir);
-            LinkSingleFile(assignedDriveLetter, "amdkmpfd.stz", "amdkmpfd.stz", amdSubDir);
-
-            // 驱动证书映射
-            LinkSingleFile(assignedDriveLetter, "u0418637.cat", "oem43.cat", catPath);
-
 
             // --- 2. SysWOW64 (32位兼容组件) ---
             // 核心渲染
@@ -898,17 +1214,31 @@ namespace ExHyperV.Services
             // 32位特殊命名映射
             LinkSingleFile(assignedDriveLetter, "atiadlxy.dll", "atiadlxx.dll", sw64); 
             LinkSingleFile(assignedDriveLetter, "detoured32.dll", "detoured.dll", sw64);
+            LinkSingleFile(assignedDriveLetter, "amdsacli32.dll", "amdsacli32.dll", sw64, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "amf-mft-mjpeg-decoder32.dll", "amf-mft-mjpeg-decoder32.dll", sw64, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "atiadlxy.dll", "atiadlxy.dll", sw64, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "atieah32.exe", "atieah32.exe", sw64, FilePromotionMode.PreserveExisting, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "amd_comgr32.dll", "amd_comgr32.dll", sw64, FilePromotionMode.PreserveExisting, openClPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "Rapidfire.dll", "Rapidfire.dll", sw64, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
+            LinkSingleFile(assignedDriveLetter, "RapidFireServer.dll", "RapidFireServer.dll", sw64, FilePromotionMode.PreserveExisting, amdWinPackageNames, requirePreferredPackage: true);
 
             // 资源
             LinkSingleFile(assignedDriveLetter, "atiapfxx.blb", "atiapfxx.blb", sw64);
             LinkSingleFile(assignedDriveLetter, "ativvsva.dat", "ativvsva.dat", sw64);
             LinkSingleFile(assignedDriveLetter, "ativvsvl.dat", "ativvsvl.dat", sw64);
 
-            // --- 3. Vulkan 支持 (通用) ---
-            LinkSingleFile(assignedDriveLetter, "amdvlk64.dll", "amdvlk64.dll", s32);
-            LinkSingleFile(assignedDriveLetter, "amdvlk64.dll", "vulkan-1.dll", s32);
-            LinkSingleFile(assignedDriveLetter, "amdvlk32.dll", "vulkan-1.dll", sw64);
+            // --- 3. Vulkan Loader 与工具 ---
+            // amdvlk*.dll 是 AMD ICD，不是系统 Vulkan Loader；这里严格按 AMD INF 的映射提升。
+            LinkSingleFile(assignedDriveLetter, "vulkan64.dll", "vulkan-1.dll", s32, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkan64.dll", "vulkan-1-999-0-0-0.dll", s32, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkaninfo64.exe", "vulkaninfo.exe", s32, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkaninfo64.exe", "vulkaninfo-1-999-0-0-0.exe", s32, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkan32.dll", "vulkan-1.dll", sw64, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkan32.dll", "vulkan-1-999-0-0-0.dll", sw64, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkaninfo32.exe", "vulkaninfo.exe", sw64, FilePromotionMode.WhenNewer, selectedPackageNames);
+            LinkSingleFile(assignedDriveLetter, "vulkaninfo32.exe", "vulkaninfo-1-999-0-0-0.exe", sw64, FilePromotionMode.WhenNewer, selectedPackageNames);
         }
+
         private void PromoteQualcommGpuFiles(string assignedDriveLetter)
         {
             string s32 = "System32";
@@ -940,10 +1270,19 @@ namespace ExHyperV.Services
             LinkSingleFile(assignedDriveLetter, "qcegpchpe.dll", "qcegpdx86.dll", sc32); // 注意：目标是 qcegpdx86.dll
             LinkSingleFile(assignedDriveLetter, "qcgpuchpecompilercore.dll", "qcgpux86compilercore.DLL", sc32);
         }
-        private void ProcessPromotionRegistryKey(Microsoft.Win32.RegistryKey adapterKey, string subKeyName, string assignedDriveLetter, string targetSubDir)
+        private void ProcessPromotionRegistryKey(
+            Microsoft.Win32.RegistryKey adapterKey,
+            string subKeyName,
+            string assignedDriveLetter,
+            string targetSubDir,
+            IReadOnlyCollection<string> preferredPackageNames)
         {
             using var promotionKey = adapterKey.OpenSubKey(subKeyName);
             if (promotionKey == null) return;
+
+            FilePromotionMode promotionMode = subKeyName.Contains("Overwrite", StringComparison.OrdinalIgnoreCase)
+                ? FilePromotionMode.Overwrite
+                : FilePromotionMode.WhenNewer;
 
             foreach (var valName in promotionKey.GetValueNames())
             {
@@ -961,72 +1300,68 @@ namespace ExHyperV.Services
                     sourceSearch = targetLinkName = single;
                 }
 
-                if (!string.IsNullOrEmpty(sourceSearch))
+                if (!string.IsNullOrEmpty(sourceSearch) && !string.IsNullOrEmpty(targetLinkName))
                 {
-                    LinkSingleFile(assignedDriveLetter, sourceSearch, targetLinkName, targetSubDir);
+                    LinkSingleFile(
+                        assignedDriveLetter,
+                        sourceSearch,
+                        targetLinkName,
+                        targetSubDir,
+                        promotionMode,
+                        preferredPackageNames);
                 }
             }
         }
 
-        private void LinkSingleFile(string assignedDriveLetter, string sourceName, string targetName, string targetSubDir)
+        private void LinkSingleFile(
+            string assignedDriveLetter,
+            string sourceName,
+            string targetName,
+            string targetSubDir,
+            FilePromotionMode promotionMode = FilePromotionMode.PreserveExisting,
+            IReadOnlyCollection<string>? preferredPackageNames = null,
+            bool requirePreferredPackage = false)
         {
             try
             {
                 string guestRepo = Path.Combine(assignedDriveLetter, "Windows", "System32", "HostDriverStore", "FileRepository");
                 string hostDestDir = Path.Combine(assignedDriveLetter, "Windows", targetSubDir);
+                string hostLinkPath = ResolveGuestPromotionTarget(hostDestDir, targetName);
 
-                if (!Directory.Exists(hostDestDir))
-                {
-                    Directory.CreateDirectory(hostDestDir);
-                }
-                if (targetSubDir.Equals("System32", StringComparison.OrdinalIgnoreCase) ||
-                    targetSubDir.Contains("SyChpe32", StringComparison.OrdinalIgnoreCase) ||
-                    targetSubDir.Contains("SysWOW64", StringComparison.OrdinalIgnoreCase))
-                {
-                    ExecuteCommand($"cmd /c takeown /f \"{hostDestDir}\" /a");
-                    ExecuteCommand($"cmd /c icacls \"{hostDestDir}\" /grant *S-1-5-32-544:F");
-                }
+                // 完整 FileRepository 虽然已复制，但厂商固定映射只能在当前显卡的精确包集合中查找；
+                // CopyToVm 调用会显式传入主包，AMD 的特定组件也会显式传入对应伴随包。
+                // 这同时阻止旧版或其他显卡遗留在来宾 DriverStore 中的同名文件被误用，
+                // Qualcomm 的 ARM64/x86/CHPE 子目录则随主包完整保留。
+                GpuDriverPackagePlan? activePlan = _activeDriverPackagePlan.Value;
+                IReadOnlyCollection<string>? effectivePackageNames =
+                    preferredPackageNames ?? activePlan?.PackageNames;
+                bool allowRepositoryFallback = activePlan == null && !requirePreferredPackage;
 
-                string hostLinkPath = Path.Combine(hostDestDir, targetName);
-                bool isReparsePoint = false;
-                bool targetPathExists = File.Exists(hostLinkPath) || Directory.Exists(hostLinkPath);
-                try
+                var foundFiles = FindDriverSourceFiles(
+                    guestRepo,
+                    sourceName,
+                    effectivePackageNames,
+                    allowRepositoryFallback);
+                if (foundFiles.Count == 0)
                 {
-                    isReparsePoint = File.GetAttributes(hostLinkPath).HasFlag(FileAttributes.ReparsePoint);
-                    targetPathExists = true;
-                }
-                catch { }
-
-                // 刷新旧版创建的错误链接；来宾原有的普通文件仍保持不变。
-                if (targetPathExists && !isReparsePoint) return;
-
-                if (isReparsePoint)
-                {
-                    int deleteExitCode = ExecuteCommand($"cmd /c del /f /q \"{hostLinkPath}\"");
-                    if (deleteExitCode != 0)
+                    if (promotionMode != FilePromotionMode.PreserveExisting || requirePreferredPackage)
                     {
-                        string warning = $"[GPU Link] Unable to replace {hostLinkPath}: del exited with code {deleteExitCode}.";
+                        string warning = $"[GPU Link] Required promotion source not found: {sourceName}.";
                         Debug.WriteLine(warning);
                         _linkWarnings.Value?.Enqueue(warning);
-                        return;
                     }
+                    return;
                 }
-
-                try
+                if (foundFiles.Count > 1)
                 {
-                    if (File.GetAttributes(hostLinkPath) != (FileAttributes)(-1))
-                        return;
+                    string warning = $"[GPU Link] Promotion source is ambiguous: {sourceName}.";
+                    Debug.WriteLine(warning);
+                    _linkWarnings.Value?.Enqueue(warning);
+                    return;
                 }
-                catch {}
 
-                var foundFiles = new DirectoryInfo(guestRepo)
-                                    .GetFiles(sourceName, SearchOption.AllDirectories)
-                                    .OrderByDescending(f => f.LastWriteTime)
-                                    .ToList();
-
-                if (foundFiles.Count == 0) return;
-
-                string hostSourceFile = foundFiles[0].FullName;
+                FileInfo sourceFile = foundFiles[0];
+                string hostSourceFile = sourceFile.FullName;
                 string relativeSourcePath = Path.GetRelativePath(
                     Path.GetFullPath(assignedDriveLetter),
                     Path.GetFullPath(hostSourceFile));
@@ -1040,12 +1375,137 @@ namespace ExHyperV.Services
 
                 string guestInternalTarget = Path.Combine(@"C:\", relativeSourcePath);
 
+                string hostLinkDirectory = Path.GetDirectoryName(hostLinkPath)
+                    ?? throw new IOException($"Invalid driver promotion target: {targetName}");
+                Directory.CreateDirectory(hostLinkDirectory);
+                if (targetSubDir.Equals("System32", StringComparison.OrdinalIgnoreCase) ||
+                    targetSubDir.Contains("SyChpe32", StringComparison.OrdinalIgnoreCase) ||
+                    targetSubDir.Contains("SysWOW64", StringComparison.OrdinalIgnoreCase))
+                {
+                    ExecuteCommand($"cmd /c takeown /f \"{hostDestDir}\" /a");
+                    ExecuteCommand($"cmd /c icacls \"{hostDestDir}\" /grant *S-1-5-32-544:F");
+                }
+
+                bool isReparsePoint = false;
+                bool targetPathExists = File.Exists(hostLinkPath) || Directory.Exists(hostLinkPath);
+                bool targetIsDirectory = Directory.Exists(hostLinkPath);
+                string? backupPath = null;
+                string? previousLinkTarget = null;
+                try
+                {
+                    isReparsePoint = File.GetAttributes(hostLinkPath).HasFlag(FileAttributes.ReparsePoint);
+                    targetPathExists = true;
+                }
+                catch { }
+
+                if (targetPathExists)
+                {
+                    if (targetIsDirectory && !isReparsePoint)
+                    {
+                        string warning = $"[GPU Link] Refusing to replace directory {hostLinkPath}.";
+                        Debug.WriteLine(warning);
+                        _linkWarnings.Value?.Enqueue(warning);
+                        return;
+                    }
+
+                    bool shouldReplace = promotionMode switch
+                    {
+                        FilePromotionMode.Overwrite => true,
+                        FilePromotionMode.WhenNewer => IsSourceNewerThanDestination(
+                            sourceFile,
+                            hostLinkPath,
+                            isReparsePoint,
+                            assignedDriveLetter),
+                        // 保留原逻辑：普通来宾文件不动，但刷新旧版创建的错误链接。
+                        _ => isReparsePoint
+                    };
+
+                    if (!shouldReplace) return;
+
+                    if (isReparsePoint)
+                    {
+                        try { previousLinkTarget = new FileInfo(hostLinkPath).LinkTarget; }
+                        catch { }
+
+                        int deleteExitCode = ExecuteCommand($"cmd /c del /f /q \"{hostLinkPath}\"");
+                        if (deleteExitCode != 0)
+                        {
+                            string warning = $"[GPU Link] Unable to replace {hostLinkPath}: del exited with code {deleteExitCode}.";
+                            Debug.WriteLine(warning);
+                            _linkWarnings.Value?.Enqueue(warning);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        backupPath = $"{hostLinkPath}.exhyperv-backup-{Guid.NewGuid():N}";
+                        try
+                        {
+                            File.Move(hostLinkPath, backupPath);
+                        }
+                        catch (Exception ex)
+                        {
+                            string warning = $"[GPU Link] Unable to back up {hostLinkPath}: {ex.Message}";
+                            Debug.WriteLine(warning);
+                            _linkWarnings.Value?.Enqueue(warning);
+                            return;
+                        }
+                    }
+                }
+
                 int exitCode = ExecuteCommand($"cmd /c mklink \"{hostLinkPath}\" \"{guestInternalTarget}\"");
                 if (exitCode != 0)
                 {
+                    try
+                    {
+                        File.GetAttributes(hostLinkPath);
+                        ExecuteCommand($"cmd /c del /f /q \"{hostLinkPath}\"");
+                    }
+                    catch { }
+
+                    if (!string.IsNullOrEmpty(backupPath))
+                    {
+                        try
+                        {
+                            File.Move(backupPath, hostLinkPath);
+                        }
+                        catch (Exception ex)
+                        {
+                            string rollbackWarning = $"[GPU Link] Rollback failed for {hostLinkPath}: {ex.Message}";
+                            Debug.WriteLine(rollbackWarning);
+                            _linkWarnings.Value?.Enqueue(rollbackWarning);
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(previousLinkTarget))
+                    {
+                        int restoreExitCode = ExecuteCommand($"cmd /c mklink \"{hostLinkPath}\" \"{previousLinkTarget}\"");
+                        if (restoreExitCode != 0)
+                        {
+                            string rollbackWarning = $"[GPU Link] Unable to restore previous link {hostLinkPath}: mklink exited with code {restoreExitCode}.";
+                            Debug.WriteLine(rollbackWarning);
+                            _linkWarnings.Value?.Enqueue(rollbackWarning);
+                        }
+                    }
+
                     string warning = $"[GPU Link] {targetName} -> {guestInternalTarget}: mklink exited with code {exitCode}.";
                     Debug.WriteLine(warning);
                     _linkWarnings.Value?.Enqueue(warning);
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(backupPath))
+                {
+                    try
+                    {
+                        File.SetAttributes(backupPath, FileAttributes.Normal);
+                        File.Delete(backupPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        string warning = $"[GPU Link] Link created, but backup cleanup failed for {backupPath}: {ex.Message}";
+                        Debug.WriteLine(warning);
+                        _linkWarnings.Value?.Enqueue(warning);
+                    }
                 }
             }
             catch (Exception ex)
@@ -1054,6 +1514,170 @@ namespace ExHyperV.Services
                 Debug.WriteLine(warning);
                 _linkWarnings.Value?.Enqueue(warning);
             }
+        }
+
+        private static string ResolveGuestPromotionTarget(string destinationRoot, string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName))
+                throw new IOException("Driver promotion target is empty.");
+
+            string normalizedTarget = targetName.Trim()
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            if (Path.IsPathRooted(normalizedTarget))
+                throw new IOException($"Driver promotion target must be relative: {targetName}");
+
+            string[] targetParts = normalizedTarget.Split(
+                Path.DirectorySeparatorChar,
+                StringSplitOptions.RemoveEmptyEntries);
+            if (targetParts.Length == 0 ||
+                targetParts.Any(part => part is "." or ".." || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+            {
+                throw new IOException($"Invalid driver promotion target: {targetName}");
+            }
+
+            string fullRoot = Path.GetFullPath(destinationRoot)
+                .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string fullTarget = Path.GetFullPath(Path.Combine(fullRoot, Path.Combine(targetParts)));
+            if (!fullTarget.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"Driver promotion target escapes the guest directory: {targetName}");
+
+            return fullTarget;
+        }
+
+        private static List<FileInfo> FindDriverSourceFiles(
+            string guestRepo,
+            string sourceName,
+            IReadOnlyCollection<string>? preferredPackageNames,
+            bool allowRepositoryFallback = true)
+        {
+            if (!Directory.Exists(guestRepo) || string.IsNullOrWhiteSpace(sourceName)) return new List<FileInfo>();
+
+            string normalizedSource = sourceName.Trim()
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            if (Path.IsPathRooted(normalizedSource))
+                throw new IOException($"Driver source must be relative to FileRepository: {sourceName}");
+
+            string[] sourceParts = normalizedSource.Split(
+                Path.DirectorySeparatorChar,
+                StringSplitOptions.RemoveEmptyEntries);
+            if (sourceParts.Length == 0 || sourceParts.Any(part => part == "." || part == ".."))
+                throw new IOException($"Invalid DriverStore source path: {sourceName}");
+
+            var matches = new List<FileInfo>();
+
+            void SearchPackageDirectories(IEnumerable<string> packageDirectories)
+            {
+                string relativeDirectory = Path.GetDirectoryName(normalizedSource) ?? string.Empty;
+                string filePattern = Path.GetFileName(normalizedSource);
+
+                foreach (string packageDirectory in packageDirectories)
+                {
+                    try
+                    {
+                        string searchRoot = Path.Combine(packageDirectory, relativeDirectory);
+                        if (!Directory.Exists(searchRoot)) continue;
+                        SearchOption searchOption = sourceParts.Length == 1
+                            ? SearchOption.AllDirectories
+                            : SearchOption.TopDirectoryOnly;
+                        matches.AddRange(new DirectoryInfo(searchRoot).GetFiles(filePattern, searchOption));
+                    }
+                    catch (UnauthorizedAccessException) { }
+                    catch (DirectoryNotFoundException) { }
+                }
+            }
+
+            if (preferredPackageNames != null && preferredPackageNames.Count > 0)
+            {
+                var preferredDirectories = preferredPackageNames
+                    .Where(name => !string.IsNullOrWhiteSpace(name) && Path.GetFileName(name) == name)
+                    .Select(name => Path.Combine(guestRepo, name));
+                SearchPackageDirectories(preferredDirectories);
+            }
+
+            if (matches.Count == 0 && allowRepositoryFallback)
+            {
+                if (sourceParts.Length > 1)
+                {
+                    SearchPackageDirectories(Directory.EnumerateDirectories(guestRepo, "*", SearchOption.TopDirectoryOnly));
+                }
+                else
+                {
+                    matches.AddRange(new DirectoryInfo(guestRepo).GetFiles(normalizedSource, SearchOption.AllDirectories));
+                }
+            }
+
+            return matches
+                .OrderBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool IsSourceNewerThanDestination(
+            FileInfo sourceFile,
+            string destinationPath,
+            bool destinationIsReparsePoint,
+            string assignedDriveLetter)
+        {
+            try
+            {
+                string timestampPath = destinationPath;
+                if (destinationIsReparsePoint)
+                {
+                    string? linkTarget = new FileInfo(destinationPath).LinkTarget;
+                    if (string.IsNullOrWhiteSpace(linkTarget)) return true;
+
+                    if (Path.IsPathFullyQualified(linkTarget))
+                    {
+                        string? targetRoot = Path.GetPathRoot(linkTarget);
+                        if (string.IsNullOrEmpty(targetRoot)) return true;
+                        string relativeTarget = Path.GetRelativePath(targetRoot, linkTarget);
+                        timestampPath = Path.Combine(assignedDriveLetter, relativeTarget);
+                    }
+                    else
+                    {
+                        timestampPath = Path.GetFullPath(
+                            Path.Combine(Path.GetDirectoryName(destinationPath) ?? assignedDriveLetter, linkTarget));
+                    }
+
+                    // 链接仍指向旧包或旧版错误源时必须刷新，不能只比较时间戳。
+                    if (!Path.GetFullPath(timestampPath).Equals(
+                            Path.GetFullPath(sourceFile.FullName),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                if (!File.Exists(timestampPath)) return true;
+
+                string extension = Path.GetExtension(destinationPath);
+                if (extension.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    FileVersionInfo sourceVersion = FileVersionInfo.GetVersionInfo(sourceFile.FullName);
+                    FileVersionInfo destinationVersion = FileVersionInfo.GetVersionInfo(timestampPath);
+                    int versionComparison = CompareFileVersions(sourceVersion, destinationVersion);
+                    if (versionComparison != 0) return versionComparison > 0;
+                }
+
+                return sourceFile.LastWriteTimeUtc > File.GetLastWriteTimeUtc(timestampPath);
+            }
+            catch
+            {
+                // 无法确认旧目标版本时刷新链接，避免保留悬空或旧格式链接。
+                return true;
+            }
+        }
+
+        private static int CompareFileVersions(FileVersionInfo left, FileVersionInfo right)
+        {
+            int comparison = left.FileMajorPart.CompareTo(right.FileMajorPart);
+            if (comparison != 0) return comparison;
+            comparison = left.FileMinorPart.CompareTo(right.FileMinorPart);
+            if (comparison != 0) return comparison;
+            comparison = left.FileBuildPart.CompareTo(right.FileBuildPart);
+            return comparison != 0
+                ? comparison
+                : left.FilePrivatePart.CompareTo(right.FilePrivatePart);
         }
 
         private static void SetFolderReadOnly(string folderPath)
@@ -1088,28 +1712,118 @@ namespace ExHyperV.Services
             }
         }
 
-        private string NvidiaReg(string letter)
+        private string PatchNvidiaServiceRegistry(
+            string letter,
+            GpuDriverPackagePlan packagePlan)
         {
-            string tempRegFile = Path.Combine(Path.GetTempPath(), $"nvlddmkm_{Guid.NewGuid()}.reg");
             string systemHiveFile = $@"{letter}\Windows\System32\Config\SYSTEM";
+            string offlineHiveName = $"ExHyperVNvidiaOfflineSystem_{Guid.NewGuid():N}";
+            bool hiveLoaded = false;
 
             try
             {
-                ExecuteCommand($"reg unload HKLM\\OfflineSystem");
+                if (!File.Exists(systemHiveFile))
+                    return Properties.Resources.Error_OfflineLoadVmRegistryFailed;
 
-                string localKeyPath = @"HKLM\SYSTEM\CurrentControlSet\Services\nvlddmkm";
-                if (ExecuteCommand($@"reg export ""{localKeyPath}"" ""{tempRegFile}"" /y") != 0) return Properties.Resources.Error_ExportLocalRegistryInfoFailed;
-                if (ExecuteCommand($@"reg load HKLM\OfflineSystem ""{systemHiveFile}""") != 0) return Properties.Resources.Error_OfflineLoadVmRegistryFailed;
+                using var hostBaseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(
+                    Microsoft.Win32.RegistryHive.LocalMachine,
+                    Microsoft.Win32.RegistryView.Registry64);
+                using var hostServiceKey = hostBaseKey.OpenSubKey(
+                    @"SYSTEM\CurrentControlSet\Services\nvlddmkm");
+                if (hostServiceKey == null)
+                    return Properties.Resources.Error_ExportLocalRegistryInfoFailed;
 
-                string originalText = @"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\nvlddmkm";
-                string targetText = @"HKEY_LOCAL_MACHINE\OfflineSystem\ControlSet001\Services\nvlddmkm";
-                string regContent = File.ReadAllText(tempRegFile);
-                regContent = regContent.Replace(originalText, targetText);
-                regContent = regContent.Replace("DriverStore", "HostDriverStore");
-                File.WriteAllText(tempRegFile, regContent);
-                int importExitCode = ExecuteCommand($@"reg import ""{tempRegFile}""");
-                if (importExitCode != 0)
-                    return string.Format(Properties.Resources.Error_NvidiaRegistryImportFailed, importExitCode);
+                string packageDirectory = Path.Combine(
+                    packagePlan.HostFileRepository,
+                    packagePlan.PrimaryPackageName);
+                string[] driverFiles = Directory.GetFiles(
+                    packageDirectory,
+                    "nvlddmkm.sys",
+                    SearchOption.AllDirectories);
+                if (driverFiles.Length != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"The selected NVIDIA package must contain exactly one nvlddmkm.sys; found {driverFiles.Length}: {packageDirectory}");
+                }
+
+                string relativeDriverPath = Path.GetRelativePath(
+                    packagePlan.HostFileRepository,
+                    driverFiles[0]);
+                if (relativeDriverPath.StartsWith("..", StringComparison.Ordinal) ||
+                    Path.IsPathRooted(relativeDriverPath))
+                {
+                    throw new InvalidOperationException(
+                        $"The selected NVIDIA kernel driver is outside FileRepository: {driverFiles[0]}");
+                }
+
+                string guestImagePath =
+                    $@"\SystemRoot\System32\HostDriverStore\FileRepository\{relativeDriverPath}";
+
+                string[] serviceValueNames =
+                {
+                    "Type",
+                    "Start",
+                    "ErrorControl",
+                    "Group"
+                };
+
+                var serviceValues = new List<(
+                    string Name,
+                    object Value,
+                    Microsoft.Win32.RegistryValueKind Kind)>();
+                foreach (string valueName in serviceValueNames)
+                {
+                    object? value = hostServiceKey.GetValue(
+                        valueName,
+                        null,
+                        Microsoft.Win32.RegistryValueOptions.DoNotExpandEnvironmentNames);
+                    if (value == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"The host nvlddmkm service is missing the required value {valueName}.");
+                    }
+
+                    serviceValues.Add((
+                        valueName,
+                        value,
+                        hostServiceKey.GetValueKind(valueName)));
+                }
+
+                serviceValues.Add((
+                    "ImagePath",
+                    guestImagePath,
+                    Microsoft.Win32.RegistryValueKind.ExpandString));
+
+                if (ExecuteCommand($@"reg load HKLM\{offlineHiveName} ""{systemHiveFile}""") != 0)
+                    return Properties.Resources.Error_OfflineLoadVmRegistryFailed;
+                hiveLoaded = true;
+
+                using var offlineSystem = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    offlineHiveName,
+                    writable: true);
+                if (offlineSystem == null)
+                    return Properties.Resources.Error_OfflineLoadVmRegistryFailed;
+
+                foreach (string controlSetName in GetOfflineControlSetNames(offlineSystem))
+                {
+                    using var destinationServiceKey = offlineSystem.CreateSubKey(
+                        $@"{controlSetName}\Services\nvlddmkm",
+                        writable: true);
+                    if (destinationServiceKey == null)
+                        throw new InvalidOperationException(
+                            $"Unable to create {controlSetName}\\Services\\nvlddmkm in the offline guest.");
+
+                    // Only the kernel-service bootstrap belongs to offline deployment. NVIDIA's
+                    // service subkeys contain host PnP bindings, volatile state and installed
+                    // feature state; the guest must generate or install those for itself.
+                    foreach (var serviceValue in serviceValues)
+                    {
+                        destinationServiceKey.SetValue(
+                            serviceValue.Name,
+                            serviceValue.Value,
+                            serviceValue.Kind);
+                    }
+                }
 
                 return "OK";
             }
@@ -1119,57 +1833,66 @@ namespace ExHyperV.Services
             }
             finally
             {
-                ExecuteCommand($"reg unload HKLM\\OfflineSystem");
-                if (File.Exists(tempRegFile)) File.Delete(tempRegFile);
+                if (hiveLoaded) ExecuteCommand($"reg unload HKLM\\{offlineHiveName}");
             }
         }
 
-        private async Task NvidiaProgramFoldersAsync(string assignedDriveLetter, Action<string> Log)
+        private static async Task CopyVendorProgramFoldersAsync(
+            GpuDriverVendor vendor,
+            string assignedDriveLetter,
+            Action<string> log)
         {
-            var sourceFolders = new List<string>
-    {
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA Corporation"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "NVIDIA Corporation"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "NVIDIA Corporation")
-    };
+            string[] directoryNames = vendor switch
+            {
+                GpuDriverVendor.Nvidia => new[] { "NVIDIA Corporation", "NVIDIA" },
+                GpuDriverVendor.Amd => new[] { "AMD", "ATI Technologies" },
+                GpuDriverVendor.Intel => new[] { "Intel", "Intel Corporation" },
+                GpuDriverVendor.Qualcomm => new[] { "Qualcomm", "Qualcomm Incorporated" },
+                _ => Array.Empty<string>()
+            };
+
+            string[] roots =
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)
+            };
+
+            string[] sourceFolders = roots
+                .Where(root => !string.IsNullOrWhiteSpace(root))
+                .SelectMany(root => directoryNames.Select(name => Path.Combine(root, name)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 
             foreach (var sourcePath in sourceFolders)
             {
                 if (!Directory.Exists(sourcePath)) continue;
-                string root = Path.GetPathRoot(sourcePath);
-                string relativePath = sourcePath.Substring(root.Length);
+                string root = Path.GetPathRoot(sourcePath)
+                    ?? throw new IOException($"Unable to determine the root of vendor directory: {sourcePath}");
+                string relativePath = Path.GetRelativePath(root, sourcePath);
 
                 string targetPath = Path.Combine(assignedDriveLetter, relativePath);
 
-                Log?.Invoke(string.Format(Properties.Resources.Log_Gpu_Syncing, sourcePath, targetPath));
+                log?.Invoke(string.Format(Properties.Resources.Log_Gpu_Syncing, sourcePath, targetPath));
 
-                if (!Directory.Exists(targetPath))
-                {
-                    Directory.CreateDirectory(targetPath);
-                }
-                using (Process p = Process.Start(new ProcessStartInfo
+                Directory.CreateDirectory(targetPath);
+                using Process process = Process.Start(new ProcessStartInfo
                 {
                     FileName = "robocopy.exe",
                     Arguments = $"\"{sourcePath}\" \"{targetPath}\" /E /R:1 /W:1 /MT:32 /XJ /NDL /NJH /NJS /NC /NS",
                     CreateNoWindow = true,
                     UseShellExecute = false
-                }))
-                {
-                    await p.WaitForExitAsync();
-                }
+                }) ?? throw new InvalidOperationException("Unable to start robocopy.exe.");
+                await process.WaitForExitAsync();
+                if (process.ExitCode >= 8)
+                    throw new IOException(
+                        $"Copying vendor program directory {sourcePath} failed with robocopy exit code {process.ExitCode}.");
             }
         }
 
         #endregion
 
         #region Linux 驱动环境与脚本部署
-        private string FindGpuDriverSourcePath(string gpuInstancePath)
-        {
-            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "DriverStore", "FileRepository");
-            if (Directory.Exists(path)) return path;
-            return @"C:\Windows\System32\DriverStore\FileRepository";
-        }
-
         private async Task UploadLocalFilesAsync(SshCredentials credentials, string remoteDirectory)
         {
             string systemWslLibPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "lxss", "lib");
@@ -1222,7 +1945,14 @@ namespace ExHyperV.Services
         }
 
         // 支持重启循环的部署函数
-        public Task<string> ProvisionLinuxGpuAsync(string vmName, LinuxScriptItem script, SshCredentials credentials, Action<string> progressCallback, CancellationToken ct)
+        public Task<string> ProvisionLinuxGpuAsync(
+            string vmName,
+            string gpuInstancePath,
+            string gpuManufacturer,
+            LinuxScriptItem script,
+            SshCredentials credentials,
+            Action<string> progressCallback,
+            CancellationToken ct)
         {
             return Task.Run(async () =>
             {
@@ -1262,7 +1992,9 @@ namespace ExHyperV.Services
                     }
 
                     Log(Properties.Resources.Log_Gpu_UploadingDriverWsl);
-                    string sourceDriverPath = FindGpuDriverSourcePath(string.Empty);
+                    GpuDriverPackagePlan packagePlan = await Task.Run(() =>
+                        GpuDriverPackageResolver.Resolve(gpuInstancePath, gpuManufacturer));
+                    string sourceDriverPath = packagePlan.HostFileRepository;
                     await SshService.UploadDirectoryAsync(credentials, sourceDriverPath, $"{remoteTempDir}/drivers");
                     await UploadLocalFilesAsync(credentials, $"{remoteTempDir}/lib");
 
