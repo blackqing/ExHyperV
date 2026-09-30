@@ -1,4 +1,5 @@
 using Wpf.Ui.Controls;
+using ExHyperV.Models;
 
 namespace ExHyperV.Tools
 {
@@ -7,6 +8,34 @@ namespace ExHyperV.Tools
     /// </summary>
     public static class DeviceIcons
     {
+        /// <summary>USB 图标及其字体必须成对选择；复合设备不按功能优先级抢图标。</summary>
+        public static (string Glyph, bool UsesSegoe) GetUsbIcon(UsbDeviceType type)
+        {
+            // HID 是键鼠/手柄的上层类别，不算额外功能。
+            if ((type & (UsbDeviceType.Keyboard | UsbDeviceType.Mouse | UsbDeviceType.GameController)) != 0)
+                type &= ~UsbDeviceType.HumanInterface;
+
+            var flags = (uint)type;
+            if ((type & UsbDeviceType.Composite) != 0 || (flags & (flags - 1)) != 0)
+                return Fluent(SymbolRegular.UsbPlug24);
+
+            return type switch
+            {
+                UsbDeviceType.Mouse => ("\uE962", true),
+                UsbDeviceType.Audio => ("\uE994", true),
+                UsbDeviceType.Network => ("\uE839", true),
+                UsbDeviceType.Storage => ("\uEDA2", true),
+                UsbDeviceType.Keyboard => Fluent(SymbolRegular.Keyboard24),
+                UsbDeviceType.Camera => Fluent(SymbolRegular.Camera24),
+                UsbDeviceType.Printer => Fluent(SymbolRegular.Print24),
+                UsbDeviceType.Bluetooth => Fluent(SymbolRegular.Bluetooth24),
+                UsbDeviceType.Serial => Fluent(SymbolRegular.SerialPort24),
+                _ => Fluent(SymbolRegular.UsbPlug24)
+            };
+
+            static (string, bool) Fluent(SymbolRegular symbol) => (char.ConvertFromUtf32((int)symbol), false);
+        }
+
         /// <summary>根据设备类型/友好名返回单字符 Segoe Fluent glyph。</summary>
         public static string GetGlyph(string deviceType, string friendlyName)
         {

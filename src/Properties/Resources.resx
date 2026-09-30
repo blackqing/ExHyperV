@@ -2226,6 +2226,48 @@ The existing NAT switch is: '{0}'</value>
   <data name="UsbDevice_Host" xml:space="preserve">
     <value>Host</value>
   </data>
+  <data name="UsbDevice_UnknownWithVidPid" xml:space="preserve">
+    <value>Unknown USB device ({0})</value>
+  </data>
+  <data name="UsbDevice_TypeUnknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="UsbDevice_TypeKeyboard" xml:space="preserve">
+    <value>Keyboard</value>
+  </data>
+  <data name="UsbDevice_TypeMouse" xml:space="preserve">
+    <value>Mouse</value>
+  </data>
+  <data name="UsbDevice_TypeGameController" xml:space="preserve">
+    <value>Game controller</value>
+  </data>
+  <data name="UsbDevice_TypeCamera" xml:space="preserve">
+    <value>Camera</value>
+  </data>
+  <data name="UsbDevice_TypeAudio" xml:space="preserve">
+    <value>Audio</value>
+  </data>
+  <data name="UsbDevice_TypeStorage" xml:space="preserve">
+    <value>Storage</value>
+  </data>
+  <data name="UsbDevice_TypeNetwork" xml:space="preserve">
+    <value>Network</value>
+  </data>
+  <data name="UsbDevice_TypePrinter" xml:space="preserve">
+    <value>Printer</value>
+  </data>
+  <data name="UsbDevice_TypeSerial" xml:space="preserve">
+    <value>Serial</value>
+  </data>
+  <data name="UsbDevice_TypeSmartCard" xml:space="preserve">
+    <value>Smart card</value>
+  </data>
+  <data name="UsbDevice_TypeHid" xml:space="preserve">
+    <value>HID</value>
+  </data>
+  <data name="UsbDevice_TypeSeparator" xml:space="preserve">
+    <value>, </value>
+  </data>
   <data name="DiskParser_LogSector512" xml:space="preserve">
     <value>[DiskParser] Auto-identified sector: 512 bytes (Standard/512e)</value>
   </data>
@@ -2312,6 +2354,12 @@ The existing NAT switch is: '{0}'</value>
   </data>
   <data name="USBPageViewModel_Connecting" xml:space="preserve">
     <value>Connecting...</value>
+  </data>
+  <data name="USBPageViewModel_GuestUnavailable" xml:space="preserve">
+    <value>Guest connection error</value>
+  </data>
+  <data name="USBPageViewModel_CleanupFailed" xml:space="preserve">
+    <value>Cleanup failed</value>
   </data>
   <data name="USBPageViewModel_OpenWebpageFailed" xml:space="preserve">
     <value>Unable to open webpage: {0}</value>

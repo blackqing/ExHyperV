@@ -2226,6 +2226,48 @@
   <data name="UsbDevice_Host" xml:space="preserve">
     <value>主机</value>
   </data>
+  <data name="UsbDevice_UnknownWithVidPid" xml:space="preserve">
+    <value>未知 USB 设备（{0}）</value>
+  </data>
+  <data name="UsbDevice_TypeUnknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="UsbDevice_TypeKeyboard" xml:space="preserve">
+    <value>键盘</value>
+  </data>
+  <data name="UsbDevice_TypeMouse" xml:space="preserve">
+    <value>鼠标</value>
+  </data>
+  <data name="UsbDevice_TypeGameController" xml:space="preserve">
+    <value>游戏控制器</value>
+  </data>
+  <data name="UsbDevice_TypeCamera" xml:space="preserve">
+    <value>摄像头</value>
+  </data>
+  <data name="UsbDevice_TypeAudio" xml:space="preserve">
+    <value>音频</value>
+  </data>
+  <data name="UsbDevice_TypeStorage" xml:space="preserve">
+    <value>存储</value>
+  </data>
+  <data name="UsbDevice_TypeNetwork" xml:space="preserve">
+    <value>网络</value>
+  </data>
+  <data name="UsbDevice_TypePrinter" xml:space="preserve">
+    <value>打印机</value>
+  </data>
+  <data name="UsbDevice_TypeSerial" xml:space="preserve">
+    <value>串口</value>
+  </data>
+  <data name="UsbDevice_TypeSmartCard" xml:space="preserve">
+    <value>智能卡</value>
+  </data>
+  <data name="UsbDevice_TypeHid" xml:space="preserve">
+    <value>HID</value>
+  </data>
+  <data name="UsbDevice_TypeSeparator" xml:space="preserve">
+    <value>、</value>
+  </data>
   <data name="DiskParser_LogSector512" xml:space="preserve">
     <value>[DiskParser] 自动识别扇区: 512 字节 (Standard/512e)</value>
   </data>
@@ -2312,6 +2354,12 @@
   </data>
   <data name="USBPageViewModel_Connecting" xml:space="preserve">
     <value>正在连接...</value>
+  </data>
+  <data name="USBPageViewModel_GuestUnavailable" xml:space="preserve">
+    <value>客户机连接异常</value>
+  </data>
+  <data name="USBPageViewModel_CleanupFailed" xml:space="preserve">
+    <value>清理失败</value>
   </data>
   <data name="USBPageViewModel_OpenWebpageFailed" xml:space="preserve">
     <value>无法打开网页: {0}</value>

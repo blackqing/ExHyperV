@@ -775,7 +775,7 @@ USB Passthrough allows assigning a USB device on the host to a virtual machine f
 
 #### How It Works
 
-ExHyperV wraps the USBIP protocol using the af-hyperv protocol within VMBus, establishing a high-performance data channel between the host and the virtual machine without any network configuration.
+ExHyperV wraps the USBIP protocol using the VMBusPipe protocol within VMBus, establishing a high-performance data channel between the host and the virtual machine without any network configuration.
 
 #### Requirements
 

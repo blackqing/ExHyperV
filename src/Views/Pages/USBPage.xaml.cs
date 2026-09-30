@@ -7,6 +7,8 @@ namespace ExHyperV.Views
         public USBPage()
         {
             InitializeComponent();
+            Loaded += (_, _) => (DataContext as ViewModels.USBPageViewModel)?.StartViewMonitoring();
+            Unloaded += (_, _) => (DataContext as ViewModels.USBPageViewModel)?.StopViewMonitoring();
         }
     }
 }

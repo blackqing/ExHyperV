@@ -5943,6 +5943,132 @@ namespace ExHyperV.Properties {
                 return ResourceManager.GetString("UsbDevice_Host", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   查找类似 Unknown USB device ({0}) 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_UnknownWithVidPid {
+            get {
+                return ResourceManager.GetString("UsbDevice_UnknownWithVidPid", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Unknown 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeUnknown {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeUnknown", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Keyboard 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeKeyboard {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeKeyboard", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Mouse 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeMouse {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeMouse", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Game controller 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeGameController {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeGameController", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Camera 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeCamera {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeCamera", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Audio 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeAudio {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeAudio", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Storage 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeStorage {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeStorage", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Network 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeNetwork {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeNetwork", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Printer 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypePrinter {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypePrinter", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Serial 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeSerial {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeSerial", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Smart card 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeSmartCard {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeSmartCard", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 HID 的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeHid {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeHid", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 ,  的本地化字符串。
+        /// </summary>
+        public static string UsbDevice_TypeSeparator {
+            get {
+                return ResourceManager.GetString("UsbDevice_TypeSeparator", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   查找类似  USB passthrough requires pre-installed drivers and agents. Read the guide for details. 的本地化字符串。
@@ -5983,9 +6109,22 @@ namespace ExHyperV.Properties {
         /// <summary>
         ///   查找类似 Connecting... 的本地化字符串。
         /// </summary>
+        public static string USBPageViewModel_GuestUnavailable {
+            get { return ResourceManager.GetString("USBPageViewModel_GuestUnavailable", resourceCulture); }
+        }
+
         public static string USBPageViewModel_Connecting {
             get {
                 return ResourceManager.GetString("USBPageViewModel_Connecting", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   查找类似 Cleanup failed 的本地化字符串。
+        /// </summary>
+        public static string USBPageViewModel_CleanupFailed {
+            get {
+                return ResourceManager.GetString("USBPageViewModel_CleanupFailed", resourceCulture);
             }
         }
         

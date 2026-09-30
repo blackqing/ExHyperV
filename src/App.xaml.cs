@@ -66,6 +66,19 @@ public partial class App
     }
     protected override void OnExit(ExitEventArgs e)
     {
+        try
+        {
+            // The dispatcher is stopping; finish USB cleanup on a worker before
+            // process exit. This also requires already-running service gate
+            // owners to remain dispatcher-independent (ConfigureAwait(false));
+            // Task.Run here alone cannot release a gate held by a UI continuation.
+            Task.Run(() => ExHyperV.Services.UsbVmbusService.StopAllTunnelsAsync())
+                .GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ExHyperV-USB] Shutdown cleanup failed: {ex.Message}");
+        }
         ExHyperV.Services.HostAzureFeatureSetService.EnsureDisabledAtRest();
         // 主动停掉 ARP 嗅探的 ETW 会话：赶在 CLR 硬终止后台线程之前、在受控时机清理，
         // 否则 ProcessTrace 线程会阻止进程退出；服务层的 ProcessExit 处理仅作后备。

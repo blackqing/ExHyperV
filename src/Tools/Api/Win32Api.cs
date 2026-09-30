@@ -178,11 +178,15 @@ public static class Win32Api
 
             // Name/Class/Service：优先 cfgmgr32 DEVPKEY（支持 Unknown 状态设备）
             // Win32_PnPEntity 仅作为 fallback，Unknown 状态时该条目不存在
+            string systemName = GetDevNodeStringProperty(devInst, instanceId,
+                new Guid("B725F130-47EF-101A-A5F1-02608C9EEBAC"), 10); // DEVPKEY_NAME
             string friendlyName = GetDevNodeStringProperty(devInst, instanceId,
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 14); // DEVPKEY_Device_FriendlyName
             if (string.IsNullOrEmpty(friendlyName))
                 friendlyName = GetDevNodeStringProperty(devInst, instanceId,
                     new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 2);  // DEVPKEY_Device_DeviceDesc
+            string busReportedDescription = GetDevNodeStringProperty(devInst, instanceId,
+                new Guid("540B947E-8B40-45BC-A8A2-6A0B894CBDA2"), 4); // DEVPKEY_Device_BusReportedDeviceDesc
             string pnpClass = GetDevNodeStringProperty(devInst, instanceId,
                 new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 9);  // DEVPKEY_Device_Class
             string service = GetDevNodeStringProperty(devInst, instanceId,
@@ -207,6 +211,7 @@ public static class Win32Api
             return new PciDeviceInfo
             {
                 InstanceId = instanceId,
+                SystemName = systemName,
                 FriendlyName = friendlyName,
                 Class = pnpClass,
                 Service = service,
@@ -214,7 +219,10 @@ public static class Win32Api
                 ParentInstanceId = parentInstanceId,
                 Status = status,
                 IsPresent = isPresent,
-                LocationPaths = locationPaths
+                LocationPaths = locationPaths,
+                CompatibleIds = GetDevNodeStringListProperty(devInst, instanceId,
+                    new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 4),
+                BusReportedDescription = busReportedDescription
             };
         }).Where(x => x != null).Cast<PciDeviceInfo>().ToList();
 
@@ -415,6 +423,7 @@ public static class Win32Api
 public class PciDeviceInfo
 {
     public string InstanceId { get; set; } = "";
+    public string SystemName { get; set; } = "";
     public string FriendlyName { get; set; } = "";
     public string Class { get; set; } = "";
     public string Service { get; set; } = "";
@@ -424,6 +433,8 @@ public class PciDeviceInfo
     /// <summary>设备节点当前是否在 PnP 设备树中；与驱动状态（Status）相互独立。</summary>
     public bool IsPresent { get; set; }
     public List<string> LocationPaths { get; set; } = new();
+    public List<string> CompatibleIds { get; set; } = new();
+    public string BusReportedDescription { get; set; } = string.Empty;
 
     public string? FirstLocationPath =>
         LocationPaths.FirstOrDefault(p =>

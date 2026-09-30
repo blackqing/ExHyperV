@@ -58,7 +58,7 @@
                             <TextBlock Text="{x:Static properties:Resources.USBPage_AssignableDevices}" FontSize="16" VerticalAlignment="Center" Margin="10,0,0,0"/>
                         </StackPanel>
                         <ui:Button HorizontalAlignment="Right"
-                                   Content="{x:Static properties:Resources.USBPage_Refresh}" 
+                                   Content="{x:Static properties:Resources.USBPage_Refresh}"
                                    Command="{Binding LoadDataCommand}"
                                    IsEnabled="{Binding IsUiEnabled}"/>
                     </Grid>
@@ -77,23 +77,40 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <ui:FontIcon Grid.Column="0" 
-                                 Glyph="&#xECF0;" 
-                                 FontSize="24" 
-                                 FontFamily="{DynamicResource SegoeFluentIcons}" 
-                                 Margin="0,0,15,0"/>
+                                <ui:FontIcon Grid.Column="0"
+                                             Glyph="{Binding IconGlyph, Mode=OneWay}"
+                                             FontSize="24"
+                                             VerticalAlignment="Center"
+                                             Margin="0,0,15,0">
+                                    <ui:FontIcon.Style>
+                                        <Style TargetType="ui:FontIcon">
+                                            <Setter Property="FontFamily" Value="{DynamicResource FluentSystemIcons}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding UsesSegoeIcon}" Value="True">
+                                                    <Setter Property="FontFamily" Value="{DynamicResource SegoeFluentIcons}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ui:FontIcon.Style>
+                                </ui:FontIcon>
 
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
-<Run Text="{Binding Description}" FontSize="16"/>
-<Run Text="  " FontSize="12"/>
-<Run Text="{x:Static properties:Resources.Usb_BusLabel}" FontSize="11" Foreground="Gray"/>
-<Run Text="{Binding BusId, Mode=OneWay}" FontSize="11" Foreground="Gray"/>
-<Run Text="{x:Static properties:Resources.Usb_IdLabel}" FontSize="11" Foreground="Gray"/>
-<Run Text="{Binding VidPid, Mode=OneWay}" FontSize="11" Foreground="Gray"/>
-                                </TextBlock>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name, Mode=OneWay}"
+                                               FontSize="16"
+                                               ToolTip="{Binding Name, Mode=OneWay}"
+                                               TextWrapping="Wrap"/>
+                                    <TextBlock Text="{Binding SecondaryName, Mode=OneWay}"
+                                               FontSize="12"
+                                               Margin="0,3,0,0"
+                                               Foreground="{ui:ThemeResource TextFillColorSecondaryBrush}"
+                                               ToolTip="{Binding SecondaryName, Mode=OneWay}"
+                                               Visibility="{Binding HasSecondaryName, Converter={StaticResource BoolToVis}}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
 
                                 <ui:DropDownButton Grid.Column="2" 
                                        Content="{Binding CurrentAssignment}" 
+                                       VerticalAlignment="Center"
                                        Margin="10,0,0,0"
                                        IsEnabled="{Binding DataContext.IsUiEnabled, RelativeSource={RelativeSource AncestorType=Page}}">
                                     <ui:DropDownButton.Flyout>
