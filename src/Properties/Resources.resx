@@ -3381,6 +3381,14 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   <data name="VmDelete_TurnOffFail" xml:space="preserve">
     <value>VM '{0}' could not be turned off.</value>
   </data>
+  <data name="VmDelete_CleanupFailed" xml:space="preserve">
+    <value>The VM was unregistered, but some files or directories could not be removed. Check permissions or whether they are in use, then remove the remaining items manually:
+{0}</value>
+  </data>
+  <data name="VmDelete_UnregisterUnconfirmed" xml:space="preserve">
+    <value>Could not confirm whether the VM was unregistered. Its recovery copy has been kept: {0}
+{1}</value>
+  </data>
   <data name="VmDelete_ConfigRootMissing" xml:space="preserve">
     <value>The configuration directory for VM “{0}” could not be determined, so its reusable configuration cannot be preserved.</value>
   </data>
@@ -4009,6 +4017,7 @@ Remove them from storage and retry? Cancel to re-plug the device and try again.<
   <data name="Preferences_Save" xml:space="preserve"><value>Save</value></data>
   <data name="Preferences_SaveFailed" xml:space="preserve"><value>Could not save preferences. The saved values have been restored.</value></data>
   <data name="VmGroup_RecoveryFailed" xml:space="preserve"><value>The operation failed, and the original group relationships could not be fully restored. Refresh and check the groups before retrying.</value></data>
+  <data name="ConsoleWindow_MoreActions" xml:space="preserve"><value>More actions</value></data>
   <data name="Tray_Open" xml:space="preserve"><value>Open ExHyperV</value></data>
   <data name="Tray_Exit" xml:space="preserve"><value>Exit</value></data>
 </root>

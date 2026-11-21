@@ -23,6 +23,7 @@ namespace ExHyperV.Properties {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
     public class Resources {
+        public static string ConsoleWindow_MoreActions => ResourceManager.GetString("ConsoleWindow_MoreActions", resourceCulture);
         public static string HostPage_PreferencesTab => ResourceManager.GetString("HostPage_PreferencesTab", resourceCulture);
         public static string Preferences_PowerAction => ResourceManager.GetString("Preferences_PowerAction", resourceCulture);
         public static string Preferences_AutoOpenConsole => ResourceManager.GetString("Preferences_AutoOpenConsole", resourceCulture);
@@ -9084,6 +9085,14 @@ namespace ExHyperV.Properties {
 
         public static string VmDelete_TurnOffFail {
             get { return ResourceManager.GetString("VmDelete_TurnOffFail", resourceCulture); }
+        }
+
+        public static string VmDelete_CleanupFailed {
+            get { return ResourceManager.GetString("VmDelete_CleanupFailed", resourceCulture); }
+        }
+
+        public static string VmDelete_UnregisterUnconfirmed {
+            get { return ResourceManager.GetString("VmDelete_UnregisterUnconfirmed", resourceCulture); }
         }
 
         public static string VmDelete_ConfigRootMissing {
